@@ -11,7 +11,10 @@
 
 export function renderControls(container, { onFilterChange }) {
   container.innerHTML = `
-    <input type="search" id="repo-search" placeholder="Search by name or description…" />
+    <div class="controls-bar__search">
+      <span class="controls-bar__search-icon" aria-hidden="true">⌕</span>
+      <input type="search" id="repo-search" placeholder="Search by name or description…" />
+    </div>
     <select id="repo-sort">
       <option value="updated">Recently updated</option>
       <option value="stars">Most stars</option>

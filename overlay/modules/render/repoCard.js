@@ -56,7 +56,16 @@ export function setCardDescription(card, text, { loading = false, muted = false 
   const slot = card.querySelector('[data-role="ai-description"]');
 
   if (loading) {
-    slot.innerHTML = '<span class="repo-card__ai-loading">Generating summary…</span>';
+    // Three shimmering bars stand in for the eventual 3-4 sentence
+    // summary — motion that reflects real async progress rather than
+    // a static "please wait" label.
+    slot.innerHTML = `
+      <div class="repo-card__ai-skeleton-wrap" aria-label="Generating summary">
+        <div class="repo-card__ai-skeleton"></div>
+        <div class="repo-card__ai-skeleton"></div>
+        <div class="repo-card__ai-skeleton"></div>
+      </div>
+    `;
     return;
   }
 

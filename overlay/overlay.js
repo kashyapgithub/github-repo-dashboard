@@ -85,7 +85,15 @@ function showFirstRunSetup(settings) {
 function renderShell() {
   app.innerHTML = `
     <header class="app-header">
-      <h1>Repo Dashboard</h1>
+      <div class="app-header__brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="2" y="2" width="9" height="9" rx="2" fill="#e8a33d" />
+          <rect x="13" y="2" width="9" height="9" rx="2" fill="#3fb68b" />
+          <rect x="2" y="13" width="9" height="9" rx="2" fill="#5b6472" />
+          <rect x="13" y="13" width="9" height="9" rx="2" fill="#e8a33d" />
+        </svg>
+        <h1>Repo Dashboard</h1>
+      </div>
       <div class="app-header__settings" data-slot="settings"></div>
     </header>
     <section class="stats-bar" data-slot="stats"></section>
