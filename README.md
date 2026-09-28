@@ -32,18 +32,15 @@ website.
 
 ## How it works
 
-- Click a repo in the list to see its full details and AI summary on
-  the right.
-- Descriptions are generated once per repo and cached against its
-  last-pushed timestamp, so reopening the dashboard doesn't
-  regenerate anything unless the repo actually changed.
-- At most 3 AI requests run at once, to stay under free-tier rate
-  limits.
-- **Untouched** on a fork means it's never been pushed to since you
-  forked it (a free signal — no extra API call, and not the same as
-  an exact commits-ahead count).
-- Keyboard: `↑`/`↓` to move selection, `Enter` to open the selected
-  repo, `/` to jump to search.
+- **Apple Human Interface Guidelines (HIG)**: Sleek design system based on Apple `DESIGN.md`: deep obsidian canvas (`#0b0c0e`), genuine macOS traffic lights, frosted glass vibrancy chrome (`blur(30px) saturate(190%)`), hairline specular borders, and SF Pro typography with optical tracking.
+- **macOS Window Controls**: Native traffic light buttons (Close, Minimize, Zoom to Tab) with interactive hover micro-glyphs (`×`, `–`, `+`).
+- **Spotlight Search & Segmented Controls**: Capsule search bar with `<kbd>/</kbd>` shortcut and pill filter tabs.
+- **Apple Intelligence Card**: Luminous subtle gradient card showcasing AI-generated repository summaries.
+- Click a repo in the list to see its full details and AI summary on the right.
+- Descriptions are generated once per repo and cached against its last-pushed timestamp, so reopening the dashboard doesn't regenerate anything unless the repo actually changed.
+- At most 3 AI requests run at once, to stay under free-tier rate limits.
+- **Untouched** on a fork means it's never been pushed to since you forked it (a free signal — no extra API call, and not the same as an exact commits-ahead count).
+- Keyboard: `↑`/`↓` to move selection, `Enter` to open the selected repo, `/` to jump to search, `Esc` to close.
 
 ## Project layout
 
