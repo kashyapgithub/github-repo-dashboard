@@ -1,26 +1,26 @@
 // overlay/modules/render/repoTile.js
 //
-// Renders an individual repository as a sleek Apple "Floor Tile" (Bento Card).
-// Optimized for browsing 200+ repositories at a glance with tactile hover elevation,
-// specular highlights, language ambient accents, and one-click actions.
+// Renders an individual repository as a classy Apple Bento Card.
+// Themes:
+// - Private repos: Deep dark orange luxury glass theme with crisp white text.
+// - Public repos: Deep dark green luxury glass theme with crisp white text.
+// No colored lines across the top — unified, sleek, architectural Bento design.
 
-import { escapeHtml, timeAgo, formatNumber, getLanguageColor } from '../format.js';
+import { escapeHtml, timeAgo, formatNumber } from '../format.js';
 
 export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
   const tile = document.createElement('div');
-  tile.className = 'repo-tile';
+  const themeClass = repo.isPrivate ? 'repo-tile--private' : 'repo-tile--public';
+  tile.className = `repo-tile ${themeClass}`;
   tile.dataset.repoId = repo.id;
   tile.dataset.kind = repo.isFork ? (repo.looksUntouched ? 'untouched' : 'fork') : 'original';
   tile.tabIndex = 0;
   tile.role = 'article';
-  tile.setAttribute('aria-label', `${repo.name}, repository`);
-
-  const langColor = repo.language ? getLanguageColor(repo.language) : 'rgba(255, 255, 255, 0.2)';
-  tile.style.setProperty('--tile-accent', langColor);
+  tile.setAttribute('aria-label', `${repo.name}, ${repo.isPrivate ? 'private' : 'public'} repository`);
 
   const langDisplay = repo.language
     ? `<span class="repo-tile__lang-pill">
-        <span class="repo-tile__lang-dot" style="background-color: ${langColor}; box-shadow: 0 0 6px ${langColor}66;"></span>
+        <span class="repo-tile__lang-dot"></span>
         <span class="repo-tile__lang-name">${escapeHtml(repo.language)}</span>
       </span>`
     : '';
@@ -28,54 +28,55 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
   let kindBadge = '';
   if (repo.isFork) {
     if (repo.looksUntouched) {
-      kindBadge = `<span class="badge badge--untouched" title="Untouched fork">Untouched</span>`;
+      kindBadge = `<span class="badge badge--tile-untouched" title="Untouched fork">Untouched</span>`;
     } else {
-      kindBadge = `<span class="badge badge--fork" title="Forked repository">Fork</span>`;
+      kindBadge = `<span class="badge badge--tile-fork" title="Forked repository">Fork</span>`;
     }
   }
 
   const visBadge = repo.isPrivate
-    ? `<span class="badge badge--private" title="Private repo">
+    ? `<span class="badge badge--tile-private" title="Private repository">
         <svg class="badge__icon" viewBox="0 0 16 16" fill="currentColor">
           <path d="M4 4a4 4 0 0 1 8 0v2h.25c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-5.5C2 6.784 2.784 6 3.75 6H4V4Zm1.5 2h5V4a2.5 2.5 0 0 0-5 0v2Z"/>
         </svg>Private
       </span>`
-    : '';
+    : `<span class="badge badge--tile-public" title="Public repository">Public</span>`;
 
   const initialStatus = initialAiEntry?.status || 'no-key';
-  const descText = initialAiEntry?.text || repo.description || 'No description provided';
+  const descText = initialAiEntry?.text || repo.description || 'No description provided.';
   const isAiText = Boolean(initialAiEntry?.text);
 
   tile.innerHTML = `
-    <div class="repo-tile__glow"></div>
     <div class="repo-tile__header">
       <div class="repo-tile__header-left">
         <span class="repo-tile__status" data-role="status" data-status="${initialStatus}" title="${getStatusTitle(initialStatus)}" aria-label="AI Status"></span>
-        ${langDisplay}
-      </div>
-      <div class="repo-tile__badges">
         ${visBadge}
         ${kindBadge}
       </div>
+      <div class="repo-tile__header-right">
+        ${langDisplay}
+      </div>
     </div>
 
-    <div class="repo-tile__title-row">
-      <h3 class="repo-tile__name" title="${escapeHtml(repo.name)}">
-        ${escapeHtml(repo.name)}
-      </h3>
-      <a href="${repo.url}" target="_blank" rel="noopener" class="repo-tile__ext-link" title="Open repository on GitHub" tabindex="-1">
-        <svg viewBox="0 0 16 16" fill="currentColor">
-          <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.75.75a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0V3.56l-4.22 4.22a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L13.44 2.5H10.5a.75.75 0 0 1-.75-.75Z"/>
-        </svg>
-      </a>
-    </div>
+    <div class="repo-tile__body">
+      <div class="repo-tile__title-row">
+        <h3 class="repo-tile__name" title="${escapeHtml(repo.name)}">
+          ${escapeHtml(repo.name)}
+        </h3>
+        <a href="${repo.url}" target="_blank" rel="noopener" class="repo-tile__ext-link" title="Open repository on GitHub" tabindex="-1">
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.75.75a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0V3.56l-4.22 4.22a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L13.44 2.5H10.5a.75.75 0 0 1-.75-.75Z"/>
+          </svg>
+        </a>
+      </div>
 
-    ${renderForkCalloutHtml(repo)}
+      ${renderForkCalloutHtml(repo)}
 
-    <div class="repo-tile__desc-wrap">
-      <p class="repo-tile__desc ${isAiText ? 'repo-tile__desc--ai' : ''}" data-role="desc">
-        ${isAiText ? '<span class="tile-sparkle-icon">✦ </span>' : ''}${escapeHtml(descText)}
-      </p>
+      <div class="repo-tile__desc-box ${isAiText ? 'repo-tile__desc-box--ai' : ''}" data-role="desc-box">
+        <p class="repo-tile__desc" data-role="desc">
+          ${isAiText ? '<span class="tile-sparkle-icon">✦ AI: </span>' : ''}${escapeHtml(descText)}
+        </p>
+      </div>
     </div>
 
     <div class="repo-tile__footer">
@@ -84,8 +85,8 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
 
         ${
           repo.forksCount != null && repo.forksCount > 0
-            ? `<span class="repo-tile__metric" title="${formatNumber(repo.forksCount)} forks">
-                <svg class="repo-tile__icon" viewBox="0 0 16 16" fill="currentColor">
+            ? `<span class="repo-tile__pill" title="${formatNumber(repo.forksCount)} forks">
+                <svg class="repo-tile__pill-icon" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h4.5A2.25 2.25 0 0 0 12.5 6.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878ZM12.5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM8 12.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0V11a.75.75 0 0 1 .75-.75h.001A.75.75 0 0 1 8 11v3.872Z"/>
                 </svg>
                 <span>${formatNumber(repo.forksCount)}</span>
@@ -93,7 +94,7 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
             : ''
         }
 
-        <span class="repo-tile__updated" title="Updated ${new Date(repo.updatedAt).toLocaleString()}">
+        <span class="repo-tile__pill repo-tile__pill--time" title="Updated ${new Date(repo.updatedAt).toLocaleString()}">
           ${timeAgo(repo.updatedAt)}
         </span>
       </div>
@@ -109,26 +110,25 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
     </div>
   `;
 
-  // Wire up click selection
+  // Selection handler
   tile.addEventListener('click', (e) => {
-    // If clicked on copy button or external link, don't hijack
     if (e.target.closest('.btn-tile-copy') || e.target.closest('.repo-tile__ext-link')) return;
     if (onSelect) onSelect(repo.id);
   });
 
-  // Double click opens repository on GitHub
+  // Double click opens repo on GitHub
   tile.addEventListener('dblclick', () => {
     window.open(repo.url, '_blank', 'noopener');
   });
 
-  // Key navigation inside tile
+  // Enter opens repo
   tile.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       window.open(repo.url, '_blank', 'noopener');
     }
   });
 
-  // Copy clone button
+  // Copy clone URL button
   const copyBtn = tile.querySelector('.btn-tile-copy');
   if (copyBtn) {
     copyBtn.addEventListener('click', async (e) => {
@@ -148,9 +148,9 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
     });
   }
 
-  // Public methods to update tile in place
+  // Public methods to update in place
   tile.updateStars = () => {
-    const starContainer = tile.querySelector('.repo-tile__stars');
+    const starContainer = tile.querySelector('.repo-tile__pill--stars');
     if (starContainer) {
       starContainer.outerHTML = renderTileStarsHtml(repo);
     }
@@ -167,10 +167,11 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
       statusEl.title = getStatusTitle(entry.status);
     }
 
+    const descBox = tile.querySelector('[data-role="desc-box"]');
     const descEl = tile.querySelector('[data-role="desc"]');
     if (descEl && entry.text) {
-      descEl.classList.add('repo-tile__desc--ai');
-      descEl.innerHTML = `<span class="tile-sparkle-icon">✦ </span>${escapeHtml(entry.text)}`;
+      descBox?.classList.add('repo-tile__desc-box--ai');
+      descEl.innerHTML = `<span class="tile-sparkle-icon">✦ AI: </span>${escapeHtml(entry.text)}`;
     }
   };
 
@@ -189,7 +190,7 @@ function renderTileStarsHtml(repo) {
     : (repo.isFork ? `${repo.stars} stars (fork)` : `${repo.stars} stars`);
 
   return `
-    <span class="repo-tile__metric repo-tile__stars ${hasUpstream ? 'repo-tile__stars--upstream' : ''}" title="${title}">
+    <span class="repo-tile__pill repo-tile__pill--stars ${hasUpstream ? 'repo-tile__pill--upstream' : ''}" title="${title}">
       <svg class="star-icon ${hasUpstream ? 'star-icon--upstream' : ''}" viewBox="0 0 16 16" fill="currentColor">
         <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/>
       </svg>
@@ -206,7 +207,7 @@ function renderForkCalloutHtml(repo) {
       <svg viewBox="0 0 16 16" fill="currentColor">
         <path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h4.5A2.25 2.25 0 0 0 12.5 6.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878ZM12.5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM8 12.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0V11a.75.75 0 0 1 .75-.75h.001A.75.75 0 0 1 8 11v3.872Z"/>
       </svg>
-      <span>${escapeHtml(repo.parent.fullName)}</span>
+      <span>Forked from <strong>${escapeHtml(repo.parent.fullName)}</strong></span>
     </div>
   `;
 }
