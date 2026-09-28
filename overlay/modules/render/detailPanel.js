@@ -83,7 +83,7 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
         }
       </div>
       <div class="detail-card__body" data-role="ai-slot">
-        ${renderAiSlot(info)}
+        ${renderAiSlot(info, Boolean(onRegenerate))}
       </div>
     </div>
 
@@ -201,6 +201,16 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
     });
   }
 
+  // Wire up Retry AI button inside error card
+  const retryBtn = container.querySelector('#btn-retry-ai');
+  if (retryBtn && onRegenerate) {
+    retryBtn.addEventListener('click', () => {
+      retryBtn.disabled = true;
+      retryBtn.textContent = 'Retrying…';
+      onRegenerate(repo.id);
+    });
+  }
+
   // Wire up Open Settings button inside no-key message
   const settingsBtn = container.querySelector('#btn-open-settings-prompt');
   if (settingsBtn && onOpenSettings) {
@@ -209,7 +219,7 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
 }
 
 /** info is { status: 'no-key' | 'pending' | 'ready' | 'error', text? } */
-function renderAiSlot(info) {
+function renderAiSlot(info, canRetry = false) {
   const status = info?.status ?? 'pending';
 
   if (status === 'pending') {
@@ -227,7 +237,14 @@ function renderAiSlot(info) {
   if (status === 'error') {
     return `
       <div class="ai-error-box">
-        <p class="ai-error-title">Failed to generate summary</p>
+        <div class="ai-error-header">
+          <p class="ai-error-title">Failed to generate summary</p>
+          ${
+            canRetry
+              ? `<button type="button" class="ai-retry-btn" id="btn-retry-ai">Retry</button>`
+              : ''
+          }
+        </div>
         <p class="ai-error-desc">${escapeHtml(info.text || 'An unknown error occurred.')}</p>
       </div>
     `;

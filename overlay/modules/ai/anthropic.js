@@ -3,38 +3,68 @@
 // Talks to Anthropic's Messages API. Exposes exactly one function so
 // index.js can treat every provider identically.
 
-export async function generateWithAnthropic({ apiKey, prompt }) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      // Anthropic blocks direct browser calls by default, since API
-      // keys aren't normally meant to sit in client-side code. Here
-      // the user is knowingly pasting their own personal key into
-      // local extension storage for a personal tool, so this header
-      // is an accepted trade-off, not something to ship in a product
-      // with untrusted users.
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001', // fast, inexpensive — sized for a short summary task
-      max_tokens: 220,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
+const CANDIDATE_MODELS = ['claude-3-5-haiku-20241022', 'claude-3-haiku-20240307'];
 
-  if (!response.ok) {
-    throw new Error(describeError(response.status));
+export async function generateWithAnthropic({ apiKey, prompt }) {
+  const cleanKey = (apiKey || '').trim();
+  if (!cleanKey) {
+    throw new Error('Anthropic API key is missing. Please configure it in Settings.');
   }
 
-  const data = await response.json();
-  return data.content?.[0]?.text ?? '';
+  let lastError = null;
+
+  for (let i = 0; i < CANDIDATE_MODELS.length; i++) {
+    const model = CANDIDATE_MODELS[i];
+    const isLast = i === CANDIDATE_MODELS.length - 1;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cleanKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 220,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errData = await response.json();
+          detail = errData.error?.message || '';
+        } catch {
+          // not JSON
+        }
+
+        if (response.status === 404 && !isLast) {
+          continue;
+        }
+
+        throw new Error(detail ? `Anthropic: ${detail}` : describeError(response.status));
+      }
+
+      const data = await response.json();
+      return (data.content?.[0]?.text ?? '').trim();
+    } catch (err) {
+      lastError = err;
+      if (!err.message?.includes('404') || isLast) {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError || new Error('Failed to generate summary with Anthropic.');
 }
 
 function describeError(status) {
-  if (status === 401) return 'Anthropic rejected the API key.';
-  if (status === 429) return 'Anthropic rate limit hit — try again shortly.';
+  if (status === 401) return 'Anthropic rejected the API key (401).';
+  if (status === 403) return 'Anthropic access denied (403) — check key permissions.';
+  if (status === 429) return 'Anthropic rate limit hit (429) — try again shortly.';
   return `Anthropic API error: ${status}`;
 }

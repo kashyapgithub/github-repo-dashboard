@@ -4,6 +4,7 @@
 
 import { saveSettings, clearDescriptionCache } from '../storage.js';
 import { testGithubToken } from '../github-api.js';
+import { testAiKey } from '../ai/index.js';
 import { escapeHtml } from '../format.js';
 
 const PROVIDER_LABELS = {
@@ -117,7 +118,11 @@ export function renderSettingsPanel(container, { settings, onSaved, forceOpen })
                         <path d="M8 2c1.981 0 3.67.992 4.933 2.078 1.27 1.091 2.187 2.345 2.637 3.023a1.62 1.62 0 0 1 0 1.798c-.45.678-1.367 1.932-2.637 3.023C11.67 13.008 9.981 14 8 14c-1.981 0-3.67-.992-4.933-2.078C1.797 10.83.88 9.577.43 8.899a1.62 1.62 0 0 1 0-1.798c.45-.678 1.367-1.932 2.637-3.023C4.33 2.992 6.019 2 8 2ZM1.679 7.938c.386.564 1.18 1.637 2.298 2.6C5.074 11.487 6.47 12.5 8 12.5c1.53 0 2.926-1.013 4.023-1.962 1.118-.963 1.912-2.036 2.298-2.6a.12.12 0 0 0 0-.076c-.386-.564-1.18-1.637-2.298-2.6C10.926 4.313 9.53 3.5 8 3.5c-1.53 0-2.926 1.013-4.023 1.962-1.118.963-1.912 2.036-2.298 2.6a.12.12 0 0 0 0 .076ZM8 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z"/>
                       </svg>
                     </button>
+                    <button type="button" class="btn-verify-token btn-test-ai-key" data-provider="${value}" title="Test key with API">
+                      Test Key
+                    </button>
                   </div>
+                  <div class="token-feedback ai-key-feedback" id="feedback-key-${value}" hidden></div>
                 </div>
               `
             )
@@ -205,6 +210,34 @@ function wireUpForm(container, settings, onSaved, forceOpen) {
     });
   }
 
+  // Test AI Key action
+  container.querySelectorAll('.btn-test-ai-key').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const provider = btn.dataset.provider;
+      const input = container.querySelector(`#input-key-${provider}`);
+      const feedback = container.querySelector(`#feedback-key-${provider}`);
+      const key = input?.value?.trim() || '';
+
+      if (!key) {
+        showFeedback(feedback, 'Please enter an API key first.', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Testing…';
+
+      try {
+        await testAiKey(provider, key);
+        showFeedback(feedback, `✓ Success! Connected and verified with ${PROVIDER_LABELS[provider] || provider}.`, 'success');
+      } catch (err) {
+        showFeedback(feedback, `✕ ${escapeHtml(err.message)}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Test Key';
+      }
+    });
+  });
+
   // Provider selector change
   providerSelect.addEventListener('change', () => {
     for (const field of form.querySelectorAll('.settings__provider-key')) {
@@ -220,8 +253,11 @@ function wireUpForm(container, settings, onSaved, forceOpen) {
     const tokenVal = formData.get('githubToken')?.trim() || '';
 
     const aiApiKeys = { ...settings.aiApiKeys };
-    if (aiProvider) {
-      aiApiKeys[aiProvider] = formData.get(`key_${aiProvider}`)?.trim() || '';
+    for (const providerKey of Object.keys(PROVIDER_LABELS)) {
+      const val = formData.get(`key_${providerKey}`)?.trim();
+      if (val !== undefined && val !== '') {
+        aiApiKeys[providerKey] = val;
+      }
     }
 
     const saveBtn = form.querySelector('#btn-save-settings');

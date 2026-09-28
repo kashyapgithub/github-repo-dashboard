@@ -51,3 +51,22 @@ function buildPrompt(repo, readme) {
       : 'No README is available — base the summary on the name, description and language above.',
   ].join('\n');
 }
+
+/**
+ * Quick validation check for an AI key. Sends a minimal prompt to verify
+ * that the provider accepts the key and the model responds.
+ */
+export async function testAiKey(provider, apiKey) {
+  const generate = PROVIDERS[provider];
+  if (!generate) {
+    throw new Error(`Unknown AI provider: "${provider}"`);
+  }
+  const cleanKey = (apiKey || '').trim();
+  if (!cleanKey) {
+    throw new Error('Please enter an API key to test.');
+  }
+  return await generate({
+    apiKey: cleanKey,
+    prompt: 'Reply with the word "Working" and nothing else.',
+  });
+}
