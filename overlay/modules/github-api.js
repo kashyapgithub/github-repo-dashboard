@@ -121,5 +121,118 @@ function normalizeRepo(raw) {
     // This is a free signal — no extra API call — for "forked and
     // forgotten", as opposed to a fork you've actually worked in.
     looksUntouched: Boolean(raw.fork && raw.pushed_at === raw.created_at),
+    parent: raw.parent
+      ? {
+          fullName: raw.parent.full_name,
+          stars: raw.parent.stargazers_count ?? 0,
+          forksCount: raw.parent.forks_count ?? 0,
+          url: raw.parent.html_url,
+        }
+      : null,
+    parentStars: raw.parent ? raw.parent.stargazers_count ?? 0 : null,
   };
+}
+
+/**
+ * Enriches forked repos with upstream parent repository data
+ * (including upstream stars, parent repository name, and fork count)
+ * via GitHub's GraphQL API. Runs asynchronously in batches of 100.
+ */
+export async function enrichForksWithParent(repos, token, onRepoUpdated) {
+  const forkMap = new Map();
+  for (const repo of repos) {
+    if (repo.isFork) {
+      forkMap.set(repo.name.toLowerCase(), repo);
+    }
+  }
+
+  if (forkMap.size === 0) return repos;
+
+  try {
+    let cursor = null;
+    let hasNextPage = true;
+    let pages = 0;
+    const MAX_GRAPHQL_PAGES = 10;
+
+    while (hasNextPage && pages < MAX_GRAPHQL_PAGES) {
+      pages++;
+      const query = `
+        query($after: String) {
+          viewer {
+            repositories(first: 100, after: $after, isFork: true, affiliations: [OWNER]) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                name
+                stargazerCount
+                parent {
+                  nameWithOwner
+                  stargazerCount
+                  forkCount
+                  url
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const response = await fetch(`${API_BASE}/graphql`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query, variables: { after: cursor } }),
+      });
+
+      if (!response.ok) break;
+      const result = await response.json();
+      const repositories = result.data?.viewer?.repositories;
+      if (!repositories?.nodes) break;
+
+      for (const node of repositories.nodes) {
+        const repo = forkMap.get(node.name?.toLowerCase());
+        if (repo && node.parent) {
+          repo.parent = {
+            fullName: node.parent.nameWithOwner,
+            stars: node.parent.stargazerCount ?? 0,
+            forksCount: node.parent.forkCount ?? 0,
+            url: node.parent.url,
+          };
+          repo.parentStars = node.parent.stargazerCount ?? 0;
+          if (onRepoUpdated) {
+            onRepoUpdated(repo);
+          }
+        }
+      }
+
+      hasNextPage = Boolean(repositories.pageInfo?.hasNextPage);
+      cursor = repositories.pageInfo?.endCursor || null;
+    }
+  } catch (err) {
+    console.warn('Background fork enrichment skipped:', err);
+  }
+
+  return repos;
+}
+
+/**
+ * REST fallback to fetch single repo metadata including parent info.
+ */
+export async function fetchRepoParent(owner, repoName, token) {
+  try {
+    const raw = await githubRequest(`/repos/${owner}/${repoName}`, token);
+    if (!raw?.parent) return null;
+    return {
+      fullName: raw.parent.full_name,
+      stars: raw.parent.stargazers_count ?? 0,
+      forksCount: raw.parent.forks_count ?? 0,
+      url: raw.parent.html_url,
+    };
+  } catch {
+    return null;
+  }
 }

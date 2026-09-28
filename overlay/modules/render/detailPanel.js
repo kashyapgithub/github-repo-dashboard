@@ -4,8 +4,9 @@
 // GitHub's description, AI summary, metadata grid, and quick action links.
 
 import { escapeHtml, timeAgo, formatDate, formatNumber, getLanguageColor } from '../format.js';
+import { fetchRepoParent } from '../github-api.js';
 
-export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenSettings } = {}) {
+export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenSettings, githubToken, onParentLoaded } = {}) {
   if (!repo) {
     container.innerHTML = `
       <div class="detail-panel__empty">
@@ -44,6 +45,22 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
         ${repo.archived ? '<span class="badge badge--archived">Archived</span>' : ''}
         ${repo.owner ? `<span class="detail-panel__owner-badge">by <strong>${escapeHtml(repo.owner)}</strong></span>` : ''}
       </div>
+
+      ${
+        repo.isFork && repo.parent
+          ? `
+        <div class="detail-fork-callout">
+          <svg class="detail-fork-icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h4.5A2.25 2.25 0 0 0 12.5 6.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878ZM12.5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM8 12.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0V11a.75.75 0 0 1 .75-.75h.001A.75.75 0 0 1 8 11v3.872Z"/>
+          </svg>
+          <span class="detail-fork-text">
+            Forked from <a href="${escapeHtml(repo.parent.url || 'https://github.com/' + repo.parent.fullName)}" target="_blank" rel="noopener" class="detail-fork-link"><strong>${escapeHtml(repo.parent.fullName)}</strong></a>
+          </span>
+          <span class="detail-fork-stars" title="${repo.parent.stars.toLocaleString()} upstream stars">★ ${formatNumber(repo.parent.stars)}</span>
+        </div>
+      `
+          : ''
+      }
 
       <div class="detail-panel__actions">
         <a class="detail-btn detail-btn--primary" href="${repo.url}" target="_blank" rel="noopener">
@@ -120,12 +137,24 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
 
         <div class="detail-grid__item">
           <span class="detail-grid__label">Stars</span>
-          <span class="detail-grid__value">${formatNumber(repo.stars)}</span>
+          <span class="detail-grid__value">
+            ${
+              repo.parentStars != null
+                ? `<span title="${repo.stars} stars on your fork">${formatNumber(repo.stars)}</span> <span class="detail-grid__subtle" title="${repo.parentStars.toLocaleString()} stars on upstream (${escapeHtml(repo.parent?.fullName || '')})">(★ ${formatNumber(repo.parentStars)} upstream)</span>`
+                : (repo.isFork ? `${formatNumber(repo.stars)} <span class="detail-grid__subtle">(fork)</span>` : formatNumber(repo.stars))
+            }
+          </span>
         </div>
 
         <div class="detail-grid__item">
           <span class="detail-grid__label">Forks</span>
-          <span class="detail-grid__value">${formatNumber(repo.forksCount ?? 0)}</span>
+          <span class="detail-grid__value">
+            ${
+              repo.parent?.forksCount != null
+                ? `<span title="${repo.forksCount ?? 0} forks on this repo">${formatNumber(repo.forksCount ?? 0)}</span> <span class="detail-grid__subtle">(${formatNumber(repo.parent.forksCount)} upstream)</span>`
+                : formatNumber(repo.forksCount ?? 0)
+            }
+          </span>
         </div>
 
         <div class="detail-grid__item">
@@ -215,6 +244,22 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
   const settingsBtn = container.querySelector('#btn-open-settings-prompt');
   if (settingsBtn && onOpenSettings) {
     settingsBtn.addEventListener('click', onOpenSettings);
+  }
+
+  container.dataset.activeRepoId = String(repo.id);
+
+  // If repo is a fork and parent is not yet loaded, load on-demand
+  if (repo.isFork && !repo.parent && githubToken) {
+    fetchRepoParent(repo.owner, repo.name, githubToken).then((parent) => {
+      if (parent) {
+        repo.parent = parent;
+        repo.parentStars = parent.stars;
+        if (onParentLoaded) onParentLoaded(repo);
+        if (container.dataset.activeRepoId === String(repo.id)) {
+          renderDetailPanel(container, repo, info, { onRegenerate, onOpenSettings, githubToken, onParentLoaded });
+        }
+      }
+    });
   }
 }
 

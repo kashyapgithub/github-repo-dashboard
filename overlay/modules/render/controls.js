@@ -126,8 +126,20 @@ function matchesQuery(repo, query) {
 
 function sortRepos(repos, sortBy) {
   const copy = [...repos];
-  if (sortBy === 'stars') return copy.sort((a, b) => b.stars - a.stars);
-  if (sortBy === 'forks') return copy.sort((a, b) => (b.forksCount ?? 0) - (a.forksCount ?? 0));
+  if (sortBy === 'stars') {
+    return copy.sort((a, b) => {
+      const aVal = a.parentStars != null ? a.parentStars : a.stars;
+      const bVal = b.parentStars != null ? b.parentStars : b.stars;
+      return bVal - aVal;
+    });
+  }
+  if (sortBy === 'forks') {
+    return copy.sort((a, b) => {
+      const aVal = a.parent?.forksCount != null ? a.parent.forksCount : (a.forksCount ?? 0);
+      const bVal = b.parent?.forksCount != null ? b.parent.forksCount : (b.forksCount ?? 0);
+      return bVal - aVal;
+    });
+  }
   if (sortBy === 'name') return copy.sort((a, b) => a.name.localeCompare(b.name));
   return copy.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)); // 'updated'
 }

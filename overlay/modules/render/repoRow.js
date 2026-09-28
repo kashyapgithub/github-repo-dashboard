@@ -38,12 +38,7 @@ export function createRepoRow(repo, { onSelect }) {
       ${repo.description ? `<span class="repo-row__snippet">${escapeHtml(repo.description)}</span>` : ''}
     </span>
     <span class="repo-row__lang">${langDisplay}</span>
-    <span class="repo-row__stars" title="${repo.stars} stars">
-      <svg class="repo-row__icon star-icon" viewBox="0 0 16 16" fill="currentColor">
-        <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/>
-      </svg>
-      <span>${formatNumber(repo.stars)}</span>
-    </span>
+    ${renderStarsHtml(repo)}
     <span class="repo-row__updated" title="Updated ${new Date(repo.updatedAt).toLocaleString()}">${timeAgo(repo.updatedAt)}</span>
     <span class="repo-row__badges">
       ${visBadge}
@@ -51,8 +46,33 @@ export function createRepoRow(repo, { onSelect }) {
     </span>
   `;
 
+  row.updateStars = () => {
+    const starContainer = row.querySelector('.repo-row__stars');
+    if (starContainer) {
+      starContainer.outerHTML = renderStarsHtml(repo);
+    }
+  };
+
   row.addEventListener('click', () => onSelect(repo.id));
   return row;
+}
+
+function renderStarsHtml(repo) {
+  const hasUpstream = repo.isFork && repo.parentStars != null;
+  const count = hasUpstream ? repo.parentStars : repo.stars;
+  const title = hasUpstream
+    ? `${repo.stars} stars on your fork · ${repo.parentStars.toLocaleString()} stars on upstream (${escapeHtml(repo.parent?.fullName || 'upstream')})`
+    : (repo.isFork ? `${repo.stars} stars (fork)` : `${repo.stars} stars`);
+
+  return `
+    <span class="repo-row__stars ${hasUpstream ? 'repo-row__stars--upstream' : ''}" title="${title}">
+      <svg class="repo-row__icon star-icon ${hasUpstream ? 'star-icon--upstream' : ''}" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/>
+      </svg>
+      <span>${formatNumber(count)}</span>
+      ${hasUpstream ? '<span class="stars-sublabel">up</span>' : ''}
+    </span>
+  `;
 }
 
 const STATUS_TITLES = {

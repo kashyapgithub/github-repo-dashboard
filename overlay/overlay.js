@@ -5,7 +5,7 @@
 // the background, and wire up selection (click or keyboard).
 
 import { getSettings, getCachedDescription, setCachedDescription } from './modules/storage.js';
-import { fetchAllRepos } from './modules/github-api.js';
+import { fetchAllRepos, enrichForksWithParent } from './modules/github-api.js';
 import { generateDescription } from './modules/ai/index.js';
 import { runWithConcurrency } from './modules/concurrency.js';
 import { renderSettingsPanel } from './modules/render/settingsPanel.js';
@@ -247,6 +247,10 @@ function runDashboard(shell, repos, settings) {
     renderDetailPanel(shell.detail, repo, descriptionsById.get(selectedRepoId), {
       onRegenerate: regenerateSingleRepo,
       onOpenSettings: () => shell.settingsSlot.querySelector('.settings__toggle')?.click(),
+      githubToken: settings.githubToken,
+      onParentLoaded: (enrichedRepo) => {
+        rowsByRepoId.get(enrichedRepo.id)?.updateStars?.();
+      },
     });
   }
 
@@ -303,6 +307,16 @@ function runDashboard(shell, repos, settings) {
   setUpKeyboardShortcuts(shell, moveSelection, () => selectedRepoId, findRepo);
 
   fillInAiDescriptions(repos, rowsByRepoId, descriptionsById, settings, () => selectedRepoId, refreshDetailPanel);
+
+  if (settings.githubToken) {
+    enrichForksWithParent(repos, settings.githubToken, (enrichedRepo) => {
+      const row = rowsByRepoId.get(enrichedRepo.id);
+      row?.updateStars?.();
+      if (selectedRepoId === enrichedRepo.id) {
+        refreshDetailPanel();
+      }
+    });
+  }
 }
 
 function updateFooter(footer, visibleCount, totalCount) {
