@@ -23,7 +23,12 @@ On first open, enter:
   - Gemini: aistudio.google.com/apikey — has a free tier, the
     cheapest way to run this
 
-Both are stored only in `chrome.storage.local` on your machine.
+Both are stored only in `chrome.storage.local`, on your machine —
+never sent to us or any third party. This extension has no backend of
+its own; the only network calls it ever makes are straight from your
+browser to GitHub (with your token) and to whichever AI provider you
+pick (with that key), exactly like you typing your key into their own
+website.
 
 ## How it works
 

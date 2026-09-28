@@ -23,14 +23,10 @@ export function renderSettingsPanel(container, { settings, onSaved, forceOpen })
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
         ${forceOpen ? '' : '<button class="modal__close" type="button" aria-label="Close settings">✕</button>'}
         <h2 id="settings-heading">${forceOpen ? 'Set up the dashboard' : 'Settings'}</h2>
-        ${
-          forceOpen
-            ? `<p class="settings__intro">
-                 Both keys stay in this browser only (chrome.storage.local) —
-                 never sent anywhere except GitHub and whichever AI provider you pick below.
-               </p>`
-            : ''
-        }
+        <p class="settings__intro">
+          Your keys stay in this browser only and are never shared with any third party.
+          The extension has no server — it talks directly to GitHub and to the AI provider you pick, nobody else.
+        </p>
 
         <form class="settings__form">
           <label>
