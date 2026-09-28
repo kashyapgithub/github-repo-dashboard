@@ -48,3 +48,22 @@ export async function clearDescriptionCache() {
     await chrome.storage.local.remove(keysToRemove);
   }
 }
+
+const UI_PREFS_KEY = 'ui_prefs';
+
+/** Returns saved UI preferences (viewMode, groupBy, inspectorOpen) */
+export async function getUiPreferences() {
+  const { [UI_PREFS_KEY]: prefs } = await chrome.storage.local.get(UI_PREFS_KEY);
+  return {
+    viewMode: prefs?.viewMode ?? 'tiles', // 'tiles' | 'list'
+    groupBy: prefs?.groupBy ?? 'none',   // 'none' | 'language' | 'type' | 'year'
+    inspectorOpen: prefs?.inspectorOpen ?? true,
+  };
+}
+
+export async function saveUiPreferences(newPrefs) {
+  const current = await getUiPreferences();
+  const merged = { ...current, ...newPrefs };
+  await chrome.storage.local.set({ [UI_PREFS_KEY]: merged });
+  return merged;
+}

@@ -1,10 +1,16 @@
 // overlay/overlay.js
 //
 // Entry point for the dashboard window. Orchestrates: fetch repos,
-// render the list + detail panel, run AI description generation in
-// the background, and wire up selection (click or keyboard).
+// render the list or floor tiles view + detail panel, run AI description
+// generation in the background, and wire up selection and navigation.
 
-import { getSettings, getCachedDescription, setCachedDescription } from './modules/storage.js';
+import {
+  getSettings,
+  getCachedDescription,
+  setCachedDescription,
+  getUiPreferences,
+  saveUiPreferences,
+} from './modules/storage.js';
 import { fetchAllRepos, enrichForksWithParent } from './modules/github-api.js';
 import { generateDescription } from './modules/ai/index.js';
 import { runWithConcurrency } from './modules/concurrency.js';
@@ -12,7 +18,9 @@ import { renderSettingsPanel } from './modules/render/settingsPanel.js';
 import { renderStatsBar } from './modules/render/statsBar.js';
 import { renderControls } from './modules/render/controls.js';
 import { createRepoRow, setRowStatus } from './modules/render/repoRow.js';
+import { createRepoTile } from './modules/render/repoTile.js';
 import { renderDetailPanel } from './modules/render/detailPanel.js';
+import { escapeHtml } from './modules/format.js';
 
 const AI_REQUEST_CONCURRENCY = 3;
 const app = document.getElementById('app');
@@ -33,13 +41,14 @@ export function closeWindowSafely() {
 
 async function init() {
   const settings = await getSettings();
+  const uiPrefs = await getUiPreferences();
 
   if (!settings.githubToken) {
     showFirstRunSetup(settings);
     return;
   }
 
-  const shell = renderShell();
+  const shell = renderShell(uiPrefs);
   renderSettingsPanel(shell.settingsSlot, { settings, onSaved: init, forceOpen: false });
 
   // Wire up close window button
@@ -99,23 +108,35 @@ async function init() {
     return;
   }
 
-  // Restore main layout
+  // Restore main layout with dual-view (List or Floor Tiles) and collapsible Detail Inspector
   shell.mainArea.innerHTML = `
-    <div class="repo-list-panel">
-      <div class="repo-list-head">
-        <span class="col-status"></span>
-        <span class="col-name">Repository</span>
-        <span class="col-lang">Language</span>
-        <span class="col-stars">Stars</span>
-        <span class="col-updated">Updated</span>
-        <span class="col-badges">Visibility</span>
+    <div class="content-panel">
+      <!-- List View Container -->
+      <div class="repo-list-view ${uiPrefs.viewMode === 'list' ? '' : 'repo-view--hidden'}">
+        <div class="repo-list-head">
+          <span class="col-status"></span>
+          <span class="col-name">Repository</span>
+          <span class="col-lang">Language</span>
+          <span class="col-stars">Stars</span>
+          <span class="col-updated">Updated</span>
+          <span class="col-badges">Visibility</span>
+        </div>
+        <div class="repo-list-wrapper" data-slot="list"></div>
       </div>
-      <div class="repo-list-wrapper" data-slot="list"></div>
+
+      <!-- Floor Tiles View Container -->
+      <div class="repo-grid-view ${uiPrefs.viewMode === 'tiles' ? '' : 'repo-view--hidden'}">
+        <div class="repo-grid-wrapper" data-slot="grid"></div>
+      </div>
     </div>
-    <aside class="detail-panel" data-slot="detail"></aside>
+    <aside class="detail-panel ${uiPrefs.inspectorOpen ? '' : 'detail-panel--collapsed'}" data-slot="detail"></aside>
   `;
 
+  shell.contentPanel = shell.mainArea.querySelector('.content-panel');
+  shell.listView = shell.mainArea.querySelector('.repo-list-view');
+  shell.gridView = shell.mainArea.querySelector('.repo-grid-view');
   shell.list = shell.mainArea.querySelector('[data-slot="list"]');
+  shell.grid = shell.mainArea.querySelector('[data-slot="grid"]');
   shell.detail = shell.mainArea.querySelector('[data-slot="detail"]');
 
   // Update header count badge
@@ -124,7 +145,7 @@ async function init() {
     shell.headerCount.hidden = false;
   }
 
-  runDashboard(shell, repos, settings);
+  runDashboard(shell, repos, settings, uiPrefs);
 }
 
 function showFirstRunSetup(settings) {
@@ -175,7 +196,7 @@ function showFirstRunSetup(settings) {
 }
 
 /** Builds the static page shell once repos are known to exist. */
-function renderShell() {
+function renderShell(uiPrefs) {
   app.innerHTML = `
     <header class="app-header">
       <div class="app-header__left">
@@ -235,8 +256,13 @@ function renderShell() {
   };
 }
 
-function runDashboard(shell, repos, settings) {
+function runDashboard(shell, repos, settings, uiPrefs) {
+  let currentViewMode = uiPrefs.viewMode;
+  let currentGroupBy = uiPrefs.groupBy;
+  let isInspectorOpen = uiPrefs.inspectorOpen;
+
   const rowsByRepoId = new Map();
+  const tilesByRepoId = new Map();
   const descriptionsById = new Map();
   let visibleRepos = [];
   let selectedRepoId = null;
@@ -256,6 +282,7 @@ function runDashboard(shell, repos, settings) {
 
     descriptionsById.set(repoId, { status: 'pending' });
     setRowStatus(rowsByRepoId.get(repoId), 'pending');
+    tilesByRepoId.get(repoId)?.updateAi?.({ status: 'pending' });
     refreshDetailPanel();
 
     try {
@@ -266,11 +293,15 @@ function runDashboard(shell, repos, settings) {
         repo,
       });
       await setCachedDescription(repoId, { pushedAt: repo.pushed_at, description });
-      descriptionsById.set(repoId, { status: 'ready', text: description });
+      const readyEntry = { status: 'ready', text: description };
+      descriptionsById.set(repoId, readyEntry);
       setRowStatus(rowsByRepoId.get(repoId), 'ready');
+      tilesByRepoId.get(repoId)?.updateAi?.(readyEntry);
     } catch (err) {
-      descriptionsById.set(repoId, { status: 'error', text: err.message });
+      const errEntry = { status: 'error', text: err.message };
+      descriptionsById.set(repoId, errEntry);
       setRowStatus(rowsByRepoId.get(repoId), 'error');
+      tilesByRepoId.get(repoId)?.updateAi?.(errEntry);
     }
     refreshDetailPanel();
   }
@@ -283,6 +314,7 @@ function runDashboard(shell, repos, settings) {
       githubToken: settings.githubToken,
       onParentLoaded: (enrichedRepo) => {
         rowsByRepoId.get(enrichedRepo.id)?.updateStars?.();
+        tilesByRepoId.get(enrichedRepo.id)?.updateStars?.();
       },
     });
   }
@@ -290,11 +322,20 @@ function runDashboard(shell, repos, settings) {
   function selectRepo(repoId) {
     if (selectedRepoId != null) {
       rowsByRepoId.get(selectedRepoId)?.classList.remove('repo-row--selected');
+      tilesByRepoId.get(selectedRepoId)?.setSelected?.(false);
     }
     selectedRepoId = repoId;
     const row = rowsByRepoId.get(repoId);
+    const tile = tilesByRepoId.get(repoId);
+
     row?.classList.add('repo-row--selected');
-    row?.scrollIntoView({ block: 'nearest' });
+    tile?.setSelected?.(true);
+
+    if (currentViewMode === 'list') {
+      row?.scrollIntoView({ block: 'nearest' });
+    } else {
+      tile?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
     refreshDetailPanel();
   }
 
@@ -305,8 +346,23 @@ function runDashboard(shell, repos, settings) {
     selectRepo(visibleRepos[nextIndex].id);
   }
 
+  function toggleInspector(open) {
+    isInspectorOpen = open !== undefined ? open : !isInspectorOpen;
+    shell.detail.classList.toggle('detail-panel--collapsed', !isInspectorOpen);
+    shell.controlsSlot.setInspectorOpen?.(isInspectorOpen);
+    saveUiPreferences({ inspectorOpen: isInspectorOpen });
+  }
+
+  // Pre-instantiate both rows and tiles for instant lag-free switching
   for (const repo of repos) {
     rowsByRepoId.set(repo.id, createRepoRow(repo, { onSelect: selectRepo }));
+    tilesByRepoId.set(
+      repo.id,
+      createRepoTile(repo, {
+        onSelect: selectRepo,
+        initialAiEntry: descriptionsById.get(repo.id),
+      })
+    );
   }
 
   // Interactive Stats Bar
@@ -316,19 +372,82 @@ function runDashboard(shell, repos, settings) {
     },
   });
 
-  // Controls bar with sync back to stats bar
-  renderControls(shell.controlsSlot, {
-    onFilterChange: (filtered) => {
-      visibleRepos = filtered;
+  // Render visible repositories into either List or Floor Tiles grid
+  function renderVisibleRepos(filtered, { groupBy = currentGroupBy, viewMode = currentViewMode } = {}) {
+    visibleRepos = filtered;
+    currentGroupBy = groupBy;
+    currentViewMode = viewMode;
+
+    if (viewMode === 'list') {
+      shell.listView.classList.remove('repo-view--hidden');
+      shell.gridView.classList.add('repo-view--hidden');
       shell.list.innerHTML = '';
-      for (const repo of filtered) shell.list.appendChild(rowsByRepoId.get(repo.id));
-
-      const stillVisible = filtered.some((repo) => repo.id === selectedRepoId);
-      if (!stillVisible) {
-        selectRepo(filtered.length > 0 ? filtered[0].id : null);
+      for (const repo of filtered) {
+        shell.list.appendChild(rowsByRepoId.get(repo.id));
       }
+    } else {
+      shell.gridView.classList.remove('repo-view--hidden');
+      shell.listView.classList.add('repo-view--hidden');
+      shell.grid.innerHTML = '';
 
-      updateFooter(shell.footer, filtered.length, repos.length);
+      const groups = groupRepositories(filtered, groupBy);
+      for (const group of groups) {
+        if (group.title) {
+          const groupEl = document.createElement('section');
+          groupEl.className = 'grid-group';
+          groupEl.innerHTML = `
+            <div class="grid-group__header">
+              <h3 class="grid-group__title">${escapeHtml(group.title)}</h3>
+              <span class="grid-group__count">${group.repos.length} ${group.repos.length === 1 ? 'repo' : 'repos'}</span>
+            </div>
+            <div class="repo-grid"></div>
+          `;
+          const gridEl = groupEl.querySelector('.repo-grid');
+          for (const r of group.repos) {
+            gridEl.appendChild(tilesByRepoId.get(r.id));
+          }
+          shell.grid.appendChild(groupEl);
+        } else {
+          const gridEl = document.createElement('div');
+          gridEl.className = 'repo-grid';
+          for (const r of group.repos) {
+            gridEl.appendChild(tilesByRepoId.get(r.id));
+          }
+          shell.grid.appendChild(gridEl);
+        }
+      }
+    }
+
+    const stillVisible = filtered.some((r) => r.id === selectedRepoId);
+    if (!stillVisible) {
+      selectRepo(filtered.length > 0 ? filtered[0].id : null);
+    } else if (selectedRepoId != null) {
+      selectRepo(selectedRepoId);
+    }
+
+    updateFooter(shell.footer, filtered.length, repos.length, currentViewMode);
+  }
+
+  // Controls bar with sync to stats bar, view switcher, group by, inspector toggle
+  renderControls(shell.controlsSlot, {
+    initialViewMode: currentViewMode,
+    initialGroupBy: currentGroupBy,
+    inspectorOpen: isInspectorOpen,
+    onFilterChange: (filtered, { groupBy, viewMode }) => {
+      renderVisibleRepos(filtered, { groupBy, viewMode });
+    },
+    onViewModeChange: (newMode) => {
+      currentViewMode = newMode;
+      saveUiPreferences({ viewMode: newMode });
+      renderVisibleRepos(visibleRepos, { viewMode: newMode });
+    },
+    onGroupByChange: (newGroup) => {
+      currentGroupBy = newGroup;
+      saveUiPreferences({ groupBy: newGroup });
+      renderVisibleRepos(visibleRepos, { groupBy: newGroup });
+    },
+    onToggleInspector: (isOpen) => {
+      toggleInspector(isOpen);
     },
     onRefresh: async () => {
       await init();
@@ -337,14 +456,21 @@ function runDashboard(shell, repos, settings) {
 
   shell.controlsSlot.setRepos(repos);
 
-  setUpKeyboardShortcuts(shell, moveSelection, () => selectedRepoId, findRepo);
+  setUpKeyboardShortcuts(
+    shell,
+    moveSelection,
+    () => selectedRepoId,
+    findRepo,
+    () => currentViewMode,
+    () => toggleInspector()
+  );
 
-  fillInAiDescriptions(repos, rowsByRepoId, descriptionsById, settings, () => selectedRepoId, refreshDetailPanel);
+  fillInAiDescriptions(repos, rowsByRepoId, tilesByRepoId, descriptionsById, settings, () => selectedRepoId, refreshDetailPanel);
 
   if (settings.githubToken) {
     enrichForksWithParent(repos, settings.githubToken, (enrichedRepo) => {
-      const row = rowsByRepoId.get(enrichedRepo.id);
-      row?.updateStars?.();
+      rowsByRepoId.get(enrichedRepo.id)?.updateStars?.();
+      tilesByRepoId.get(enrichedRepo.id)?.updateStars?.();
       if (selectedRepoId === enrichedRepo.id) {
         refreshDetailPanel();
       }
@@ -352,23 +478,88 @@ function runDashboard(shell, repos, settings) {
   }
 }
 
-function updateFooter(footer, visibleCount, totalCount) {
+function groupRepositories(repoList, groupBy) {
+  if (groupBy === 'none') {
+    return [{ id: 'all', title: null, repos: repoList }];
+  }
+
+  if (groupBy === 'language') {
+    const groups = new Map();
+    for (const r of repoList) {
+      const lang = r.language || 'Plain Text & Other';
+      if (!groups.has(lang)) groups.set(lang, []);
+      groups.get(lang).push(r);
+    }
+    const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
+      if (a === 'Plain Text & Other') return 1;
+      if (b === 'Plain Text & Other') return -1;
+      return groups.get(b).length - groups.get(a).length;
+    });
+    return sortedKeys.map((k) => ({ id: `lang-${k}`, title: k, repos: groups.get(k) }));
+  }
+
+  if (groupBy === 'type') {
+    const originals = repoList.filter((r) => !r.isFork);
+    const activeForks = repoList.filter((r) => r.isFork && !r.looksUntouched);
+    const untouchedForks = repoList.filter((r) => r.isFork && r.looksUntouched);
+    const res = [];
+    if (originals.length) res.push({ id: 'type-orig', title: 'Original Repositories', repos: originals });
+    if (activeForks.length) res.push({ id: 'type-active-forks', title: 'Active Forks', repos: activeForks });
+    if (untouchedForks.length) res.push({ id: 'type-untouched-forks', title: 'Untouched Forks', repos: untouchedForks });
+    return res;
+  }
+
+  if (groupBy === 'year') {
+    const groups = new Map();
+    for (const r of repoList) {
+      const year = r.updatedAt ? new Date(r.updatedAt).getFullYear() : 'Unknown';
+      if (!groups.has(year)) groups.set(year, []);
+      groups.get(year).push(r);
+    }
+    const sortedYears = Array.from(groups.keys()).sort((a, b) => {
+      if (typeof b === 'number' && typeof a === 'number') return b - a;
+      return String(b).localeCompare(String(a));
+    });
+    return sortedYears.map((y) => ({ id: `year-${y}`, title: `Updated in ${y}`, repos: groups.get(y) }));
+  }
+
+  return [{ id: 'all', title: null, repos: repoList }];
+}
+
+function updateFooter(footer, visibleCount, totalCount, viewMode) {
+  const isTiles = viewMode === 'tiles';
   footer.innerHTML = `
     <div class="footer-left">
       <span class="footer-count">${visibleCount} of ${totalCount} repositories</span>
+      <span class="footer-mode-badge">${isTiles ? '⊞ Floor Tiles View' : '≡ List View'}</span>
     </div>
     <div class="footer-shortcuts">
       <span class="shortcut-item"><kbd>Esc</kbd> Close</span>
-      <span class="shortcut-item"><kbd>↑</kbd><kbd>↓</kbd> Select</span>
-      <span class="shortcut-item"><kbd>Enter</kbd> Open on GitHub</span>
+      <span class="shortcut-item"><kbd>${isTiles ? '←↑↓→' : '↑↓'}</kbd> Navigate</span>
+      <span class="shortcut-item"><kbd>Enter</kbd> Open</span>
+      <span class="shortcut-item"><kbd>I</kbd> Details</span>
       <span class="shortcut-item"><kbd>/</kbd> Search</span>
     </div>
   `;
 }
 
-function setUpKeyboardShortcuts(shell, moveSelection, getSelectedId, findRepo) {
+function setUpKeyboardShortcuts(shell, moveSelection, getSelectedId, findRepo, getViewMode, toggleInspector) {
   if (activeKeydownHandler) {
     document.removeEventListener('keydown', activeKeydownHandler);
+  }
+
+  function getGridColumnCount() {
+    const firstGrid = shell.grid?.querySelector('.repo-grid');
+    if (!firstGrid) return 1;
+    const tiles = firstGrid.querySelectorAll('.repo-tile');
+    if (tiles.length < 2) return 1;
+    const firstTop = tiles[0].offsetTop;
+    let count = 0;
+    for (const t of tiles) {
+      if (t.offsetTop === firstTop) count++;
+      else break;
+    }
+    return Math.max(1, count);
   }
 
   activeKeydownHandler = (event) => {
@@ -394,27 +585,47 @@ function setUpKeyboardShortcuts(shell, moveSelection, getSelectedId, findRepo) {
 
     if (isTyping) return;
 
+    const isTiles = getViewMode() === 'tiles';
+
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      moveSelection(1);
+      moveSelection(isTiles ? getGridColumnCount() : 1);
     } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveSelection(isTiles ? -getGridColumnCount() : -1);
+    } else if (event.key === 'ArrowRight' && isTiles) {
+      event.preventDefault();
+      moveSelection(1);
+    } else if (event.key === 'ArrowLeft' && isTiles) {
       event.preventDefault();
       moveSelection(-1);
     } else if (event.key === 'Enter') {
       const repo = findRepo(getSelectedId());
       if (repo) window.open(repo.url, '_blank', 'noopener');
+    } else if (event.key === 'i' || event.key === 'I') {
+      event.preventDefault();
+      toggleInspector();
     }
   };
 
   document.addEventListener('keydown', activeKeydownHandler);
 }
 
-async function fillInAiDescriptions(repos, rowsByRepoId, descriptionsById, settings, getSelectedId, refreshDetailPanel) {
+async function fillInAiDescriptions(
+  repos,
+  rowsByRepoId,
+  tilesByRepoId,
+  descriptionsById,
+  settings,
+  getSelectedId,
+  refreshDetailPanel
+) {
   const apiKey = settings.aiProvider ? settings.aiApiKeys?.[settings.aiProvider] : null;
 
   function updateStatus(repoId, entry) {
     descriptionsById.set(repoId, entry);
     setRowStatus(rowsByRepoId.get(repoId), entry.status);
+    tilesByRepoId.get(repoId)?.updateAi?.(entry);
     if (getSelectedId() === repoId) refreshDetailPanel();
   }
 
@@ -446,4 +657,3 @@ async function fillInAiDescriptions(repos, rowsByRepoId, descriptionsById, setti
     }
   });
 }
-

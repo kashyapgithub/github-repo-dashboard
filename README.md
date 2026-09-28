@@ -34,13 +34,17 @@ website.
 
 - **Apple Human Interface Guidelines (HIG)**: Sleek design system based on Apple `DESIGN.md`: deep obsidian canvas (`#0b0c0e`), genuine macOS traffic lights, frosted glass vibrancy chrome (`blur(30px) saturate(190%)`), hairline specular borders, and SF Pro typography with optical tracking.
 - **macOS Window Controls**: Native traffic light buttons (Close, Minimize, Zoom to Tab) with interactive hover micro-glyphs (`×`, `–`, `+`).
+- **Floor Tiles (Bento Grid) View**: Browse 200+ repositories effortlessly across an auto-fitting floor grid with 3D card lift on hover, specular hairline borders, ambient language glows, and one-click clone/open actions.
+- **Finder View Switcher**: Instant toggling between **`⊞ Tiles`** and **`≡ List`** view modes, remembered across sessions.
+- **Smart Grouping for 200+ Repos**: Group repositories by *Language*, *Type* (Originals, Active Forks, Untouched), or *Year Updated* with sticky category headers and count badges.
+- **Collapsible Detail Inspector**: Toggle the details inspector panel (`I` key) to expand floor tiles across 100% of your display.
 - **Spotlight Search & Segmented Controls**: Capsule search bar with `<kbd>/</kbd>` shortcut and pill filter tabs.
 - **Apple Intelligence Card**: Luminous subtle gradient card showcasing AI-generated repository summaries.
-- Click a repo in the list to see its full details and AI summary on the right.
+- Click any tile or row to view its full details and AI summary in the inspector.
 - Descriptions are generated once per repo and cached against its last-pushed timestamp, so reopening the dashboard doesn't regenerate anything unless the repo actually changed.
 - At most 3 AI requests run at once, to stay under free-tier rate limits.
 - **Untouched** on a fork means it's never been pushed to since you forked it (a free signal — no extra API call, and not the same as an exact commits-ahead count).
-- Keyboard: `↑`/`↓` to move selection, `Enter` to open the selected repo, `/` to jump to search, `Esc` to close.
+- Keyboard: `←`/`↑`/`↓`/`→` to navigate across grid or list, `Enter` to open on GitHub, `I` to toggle inspector, `/` to search, `Esc` to close.
 
 ## Project layout
 
@@ -48,15 +52,16 @@ website.
 manifest.json                            Extension config (MV3)
 background/background.js                 Opens the dashboard window
 overlay/overlay.html / .css / .js        Dashboard page + entry point
-overlay/modules/storage.js               Settings + description cache
+overlay/modules/storage.js               Settings + UI prefs + description cache
 overlay/modules/github-api.js            GitHub REST API calls
 overlay/modules/concurrency.js           Throttles AI requests
 overlay/modules/format.js                String/date helpers
 overlay/modules/ai/*.js                  One file per AI provider
 overlay/modules/render/statsBar.js       Public/private/fork counts
-overlay/modules/render/repoRow.js        One row in the repo list
+overlay/modules/render/repoRow.js        One row in the ledger list
+overlay/modules/render/repoTile.js       One bento card in the floor tiles grid
 overlay/modules/render/detailPanel.js    Selected repo's full details
-overlay/modules/render/controls.js       Search / sort / filter
+overlay/modules/render/controls.js       Search / sort / group / view switcher
 overlay/modules/render/settingsPanel.js  Settings modal
 ```
 

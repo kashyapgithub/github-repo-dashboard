@@ -2,28 +2,73 @@
 //
 // Renders the search box + segmented filter chips + sort dropdown + refresh button.
 
-export function renderControls(container, { onFilterChange, onRefresh }) {
-  container.innerHTML = `
-    <div class="controls-bar__search">
-      <svg class="controls-bar__search-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"/>
-      </svg>
-      <input type="search" id="repo-search" placeholder="Search by name, description, or language…" autocomplete="off" spellcheck="false" />
-      <button type="button" class="controls-bar__search-clear" id="search-clear" title="Clear search" aria-label="Clear search" hidden>✕</button>
-      <kbd class="controls-bar__kbd" title="Press / to focus search">/</kbd>
-    </div>
+export function renderControls(container, {
+  initialViewMode = 'tiles',
+  initialGroupBy = 'none',
+  inspectorOpen = true,
+  onFilterChange,
+  onViewModeChange,
+  onGroupByChange,
+  onToggleInspector,
+  onRefresh,
+}) {
+  let currentViewMode = initialViewMode;
+  let currentGroupBy = initialGroupBy;
+  let isInspectorOpen = inspectorOpen;
 
-    <div class="controls-bar__filter-chips" role="tablist" aria-label="Filter repositories">
-      <button type="button" class="filter-chip filter-chip--active" data-filter="all">All</button>
-      <button type="button" class="filter-chip" data-filter="original">Originals</button>
-      <button type="button" class="filter-chip" data-filter="fork">Forks</button>
-      <button type="button" class="filter-chip" data-filter="untouched">Untouched</button>
-      <button type="button" class="filter-chip" data-filter="private">Private</button>
+  container.innerHTML = `
+    <div class="controls-bar__left">
+      <div class="controls-bar__search">
+        <svg class="controls-bar__search-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"/>
+        </svg>
+        <input type="search" id="repo-search" placeholder="Search by name, description, or language…" autocomplete="off" spellcheck="false" />
+        <button type="button" class="controls-bar__search-clear" id="search-clear" title="Clear search" aria-label="Clear search" hidden>✕</button>
+        <kbd class="controls-bar__kbd" title="Press / to focus search">/</kbd>
+      </div>
+
+      <div class="controls-bar__filter-chips" role="tablist" aria-label="Filter repositories">
+        <button type="button" class="filter-chip filter-chip--active" data-filter="all">All</button>
+        <button type="button" class="filter-chip" data-filter="original">Originals</button>
+        <button type="button" class="filter-chip" data-filter="fork">Forks</button>
+        <button type="button" class="filter-chip" data-filter="untouched">Untouched</button>
+        <button type="button" class="filter-chip" data-filter="private">Private</button>
+      </div>
     </div>
 
     <div class="controls-bar__right-group">
-      <div class="controls-bar__select-wrap">
-        <select id="repo-sort" title="Sort repositories by">
+      <!-- macOS View Mode Switcher -->
+      <div class="view-switcher" role="group" aria-label="View mode">
+        <button type="button" class="view-switcher__btn ${currentViewMode === 'tiles' ? 'view-switcher__btn--active' : ''}" data-view="tiles" title="Floor Tiles View">
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5v-3Zm8 0A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5v-3Zm-8 8A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5v-3Zm8 0A1.5 1.5 0 0 1 10.5 9h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 13.5v-3Z"/>
+          </svg>
+          <span>Tiles</span>
+        </button>
+        <button type="button" class="view-switcher__btn ${currentViewMode === 'list' ? 'view-switcher__btn--active' : ''}" data-view="list" title="List View">
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M2 3.75A.75.75 0 0 1 2.75 3h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 3.75Zm0 4.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 8Zm0 4.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z"/>
+          </svg>
+          <span>List</span>
+        </button>
+      </div>
+
+      <!-- Group By Dropdown -->
+      <div class="controls-bar__select-wrap" title="Group repositories by">
+        <select id="repo-group" aria-label="Group repositories by">
+          <option value="none" ${currentGroupBy === 'none' ? 'selected' : ''}>No grouping</option>
+          <option value="language" ${currentGroupBy === 'language' ? 'selected' : ''}>Group by Language</option>
+          <option value="type" ${currentGroupBy === 'type' ? 'selected' : ''}>Group by Type</option>
+          <option value="year" ${currentGroupBy === 'year' ? 'selected' : ''}>Group by Year</option>
+        </select>
+        <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
+        </svg>
+      </div>
+
+      <!-- Sort Dropdown -->
+      <div class="controls-bar__select-wrap" title="Sort repositories by">
+        <select id="repo-sort" aria-label="Sort repositories by">
           <option value="updated">Recently updated</option>
           <option value="stars">Most stars</option>
           <option value="forks">Most forks</option>
@@ -33,6 +78,13 @@ export function renderControls(container, { onFilterChange, onRefresh }) {
           <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
         </svg>
       </div>
+
+      <!-- Inspector Toggle -->
+      <button type="button" class="controls-bar__btn ${isInspectorOpen ? 'controls-bar__btn--active' : ''}" id="btn-toggle-inspector" title="Toggle Details Inspector (I)" aria-label="Toggle Details Inspector">
+        <svg viewBox="0 0 16 16" fill="currentColor">
+          <path d="M14 2H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1ZM2.5 3.5h7v9h-7v-9Zm8.5 9v-9h2.5v9H11Z"/>
+        </svg>
+      </button>
 
       ${
         onRefresh
@@ -52,8 +104,11 @@ export function renderControls(container, { onFilterChange, onRefresh }) {
   const searchInput = container.querySelector('#repo-search');
   const clearBtn = container.querySelector('#search-clear');
   const sortSelect = container.querySelector('#repo-sort');
+  const groupSelect = container.querySelector('#repo-group');
   const filterChips = container.querySelectorAll('.filter-chip');
   const refreshBtn = container.querySelector('#repo-refresh');
+  const viewButtons = container.querySelectorAll('.view-switcher__btn');
+  const inspectorBtn = container.querySelector('#btn-toggle-inspector');
 
   function applyAndNotify() {
     const query = searchInput.value.trim().toLowerCase();
@@ -61,7 +116,7 @@ export function renderControls(container, { onFilterChange, onRefresh }) {
     clearBtn.hidden = !query;
 
     const filtered = fullRepoList.filter((repo) => matchesFilter(repo, currentFilter) && matchesQuery(repo, query));
-    onFilterChange(sortRepos(filtered, sortBy));
+    onFilterChange(sortRepos(filtered, sortBy), { groupBy: currentGroupBy, viewMode: currentViewMode });
   }
 
   function setFilter(filterId) {
@@ -72,10 +127,25 @@ export function renderControls(container, { onFilterChange, onRefresh }) {
     applyAndNotify();
   }
 
-  // Exposed so other modules (e.g. statsBar or overlay.js) can set active filter
-  container.setFilter = setFilter;
+  function setViewMode(mode) {
+    currentViewMode = mode;
+    viewButtons.forEach((btn) => {
+      btn.classList.toggle('view-switcher__btn--active', btn.dataset.view === mode);
+    });
+    if (onViewModeChange) onViewModeChange(mode);
+    applyAndNotify();
+  }
 
-  // Exposed so overlay.js can hand over fetched repo list
+  function setInspectorOpen(isOpen) {
+    isInspectorOpen = isOpen;
+    inspectorBtn?.classList.toggle('controls-bar__btn--active', isOpen);
+  }
+
+  // Exposed methods
+  container.setFilter = setFilter;
+  container.setViewMode = setViewMode;
+  container.setInspectorOpen = setInspectorOpen;
+
   container.setRepos = (repos) => {
     fullRepoList = repos;
     applyAndNotify();
@@ -96,6 +166,24 @@ export function renderControls(container, { onFilterChange, onRefresh }) {
   });
 
   sortSelect.addEventListener('change', applyAndNotify);
+
+  groupSelect.addEventListener('change', () => {
+    currentGroupBy = groupSelect.value;
+    if (onGroupByChange) onGroupByChange(currentGroupBy);
+    applyAndNotify();
+  });
+
+  viewButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setViewMode(btn.dataset.view);
+    });
+  });
+
+  inspectorBtn?.addEventListener('click', () => {
+    isInspectorOpen = !isInspectorOpen;
+    inspectorBtn.classList.toggle('controls-bar__btn--active', isInspectorOpen);
+    if (onToggleInspector) onToggleInspector(isInspectorOpen);
+  });
 
   if (refreshBtn && onRefresh) {
     refreshBtn.addEventListener('click', () => {
