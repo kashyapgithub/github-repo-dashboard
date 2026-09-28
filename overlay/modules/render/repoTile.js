@@ -40,7 +40,11 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
           <path d="M4 4a4 4 0 0 1 8 0v2h.25c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-5.5C2 6.784 2.784 6 3.75 6H4V4Zm1.5 2h5V4a2.5 2.5 0 0 0-5 0v2Z"/>
         </svg>Private
       </span>`
-    : `<span class="badge badge--tile-public" title="Public repository">Public</span>`;
+    : `<span class="badge badge--tile-public" title="Public repository">
+        <svg class="badge__icon" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0ZM1.5 8a6.5 6.5 0 0 1 1.05-3.522l3.415 3.415a.75.75 0 0 0 1.06 0l1.5-1.5a.75.75 0 0 0 0-1.06L6.106 2.915A6.47 6.47 0 0 1 8 1.5c1.47 0 2.82.49 3.9 1.314l-1.65 1.65a.75.75 0 0 0 0 1.06l1 1a.75.75 0 0 0 1.06 0l1.83-1.83A6.47 6.47 0 0 1 14.5 8c0 3.19-2.31 5.84-5.34 6.37l-1.3-2.6a.75.75 0 0 0-.82-.39l-2.04.51a.75.75 0 0 0-.55.63l-.22 1.74A6.51 6.51 0 0 1 1.5 8Z"/>
+        </svg>Public
+      </span>`;
 
   const initialStatus = initialAiEntry?.status || 'no-key';
   const descText = initialAiEntry?.text || repo.description || 'No description provided.';
