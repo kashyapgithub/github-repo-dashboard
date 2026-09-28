@@ -1,31 +1,55 @@
 // overlay/modules/render/statsBar.js
 //
 // Renders the top row of counts (total/public/private/forked/original).
-// Pure function of the repo list — no state of its own.
+// Now interactive: clicking a tile filters the repository list immediately!
 
-export function renderStatsBar(container, repos) {
+export function renderStatsBar(container, repos, { onFilterSelect } = {}) {
   const total = repos.length;
   const publicCount = repos.filter((repo) => !repo.isPrivate).length;
   const privateCount = total - publicCount;
   const forkCount = repos.filter((repo) => repo.isFork).length;
   const originalCount = total - forkCount;
+  const untouchedCount = repos.filter((repo) => repo.looksUntouched).length;
 
   const stats = [
-    ['Total', total],
-    ['Public', publicCount],
-    ['Private', privateCount],
-    ['Forked', forkCount],
-    ['Original', originalCount],
+    { id: 'all', label: 'Total', count: total, dot: '#58a6ff' },
+    { id: 'original', label: 'Originals', count: originalCount, dot: '#3fb950' },
+    { id: 'fork', label: 'Forks', count: forkCount, dot: '#8b949e' },
+    { id: 'untouched', label: 'Untouched', count: untouchedCount, dot: '#f85149' },
+    { id: 'private', label: 'Private', count: privateCount, dot: '#d29922' },
   ];
 
   container.innerHTML = stats
     .map(
-      ([label, value]) => `
-        <div class="stat-tile">
-          <span class="stat-value">${value}</span>
-          <span class="stat-label">${label}</span>
-        </div>
+      (item) => `
+        <button type="button" class="stat-tile ${item.id === 'all' ? 'stat-tile--active' : ''}" data-filter="${item.id}" title="Filter by ${item.label}">
+          <div class="stat-tile__header">
+            <span class="stat-dot" style="background-color: ${item.dot}"></span>
+            <span class="stat-label">${item.label}</span>
+          </div>
+          <span class="stat-value">${item.count}</span>
+        </button>
       `
     )
     .join('');
+
+  if (onFilterSelect) {
+    const buttons = container.querySelectorAll('.stat-tile');
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const filterId = btn.dataset.filter;
+        buttons.forEach((b) => b.classList.toggle('stat-tile--active', b === btn));
+        onFilterSelect(filterId);
+      });
+    });
+  }
+
+  // Method to sync external filter changes (e.g. from controls dropdown or search)
+  container.setActiveFilter = (filterId) => {
+    const buttons = container.querySelectorAll('.stat-tile');
+    buttons.forEach((btn) => {
+      btn.classList.toggle('stat-tile--active', btn.dataset.filter === filterId);
+    });
+  };
 }
+

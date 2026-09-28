@@ -37,13 +37,31 @@ chrome.action.onClicked.addListener(async () => {
     }
   }
 
+  // Calculate comfortable window dimensions that never overflow the screen.
+  let targetWidth = 1140;
+  let targetHeight = 720;
+  let targetTop = 50;
+  let targetLeft = 80;
+
+  try {
+    const currentWin = await chrome.windows.getCurrent();
+    if (currentWin && currentWin.width && currentWin.height) {
+      targetWidth = Math.min(1180, Math.max(880, Math.round(currentWin.width * 0.82)));
+      targetHeight = Math.min(740, Math.max(560, Math.round(currentWin.height * 0.80)));
+      targetLeft = Math.max(20, Math.round((currentWin.width - targetWidth) / 2) + (currentWin.left || 0));
+      targetTop = Math.max(20, Math.round((currentWin.height - targetHeight) / 2) + (currentWin.top || 0));
+    }
+  } catch {
+    // Fallback to default dimensions
+  }
+
   const created = await chrome.windows.create({
     url: DASHBOARD_URL,
     type: 'popup',
-    width: 1280,
-    height: 840,
-    top: 40,
-    left: 80,
+    width: targetWidth,
+    height: targetHeight,
+    top: targetTop,
+    left: targetLeft,
   });
 
   await setOpenDashboardWindowId(created.id);

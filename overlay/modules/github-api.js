@@ -75,6 +75,22 @@ function describeGithubError(status) {
 }
 
 /**
+ * Validates a GitHub token by fetching the authenticated user's profile.
+ * Returns { login, name, avatarUrl } or throws an informative Error.
+ */
+export async function testGithubToken(token) {
+  if (!token?.trim()) {
+    throw new Error('Please enter a GitHub personal access token.');
+  }
+  const user = await githubRequest('/user', token);
+  return {
+    login: user.login,
+    name: user.name || user.login,
+    avatarUrl: user.avatar_url,
+  };
+}
+
+/**
  * Reshapes GitHub's large repo object into just what the dashboard
  * needs, plus one derived field: whether a fork looks untouched.
  */
@@ -82,20 +98,28 @@ function normalizeRepo(raw) {
   return {
     id: raw.id,
     name: raw.name,
-    owner: raw.owner.login,
+    fullName: raw.full_name || `${raw.owner?.login}/${raw.name}`,
+    owner: raw.owner?.login || '',
+    ownerAvatar: raw.owner?.avatar_url || '',
     url: raw.html_url,
     description: raw.description ?? '',
     language: raw.language,
-    stars: raw.stargazers_count,
-    isPrivate: raw.private,
-    isFork: raw.fork,
+    stars: raw.stargazers_count ?? 0,
+    forksCount: raw.forks_count ?? 0,
+    openIssues: raw.open_issues_count ?? 0,
+    defaultBranch: raw.default_branch || 'main',
+    isPrivate: Boolean(raw.private),
+    isFork: Boolean(raw.fork),
+    archived: Boolean(raw.archived),
     updatedAt: raw.updated_at,
     pushed_at: raw.pushed_at,
     createdAt: raw.created_at,
+    cloneUrl: raw.clone_url || (raw.html_url ? `${raw.html_url}.git` : ''),
+    sshUrl: raw.ssh_url || '',
     // A forked repo whose last-push timestamp equals its creation
     // timestamp has never received a commit since the fork happened.
     // This is a free signal — no extra API call — for "forked and
     // forgotten", as opposed to a fork you've actually worked in.
-    looksUntouched: raw.fork && raw.pushed_at === raw.created_at,
+    looksUntouched: Boolean(raw.fork && raw.pushed_at === raw.created_at),
   };
 }
