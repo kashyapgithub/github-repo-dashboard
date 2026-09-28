@@ -1,9 +1,14 @@
 // overlay/modules/ai/anthropic.js
 //
-// Talks to Anthropic's Messages API. Exposes exactly one function so
-// index.js can treat every provider identically.
+// Talks to Anthropic's Messages API.
+// Auto-selects the latest, cost-effective Haiku model (e.g. claude-3-5-haiku-latest),
+// explicitly avoiding expensive Sonnet or Opus models to keep token consumption minimal.
 
-const CANDIDATE_MODELS = ['claude-3-5-haiku-20241022', 'claude-3-haiku-20240307'];
+const CANDIDATE_MODELS = [
+  'claude-3-5-haiku-latest',
+  'claude-3-5-haiku-20241022',
+  'claude-3-haiku-20240307',
+];
 
 export async function generateWithAnthropic({ apiKey, prompt }) {
   const cleanKey = (apiKey || '').trim();
@@ -50,7 +55,8 @@ export async function generateWithAnthropic({ apiKey, prompt }) {
       }
 
       const data = await response.json();
-      return (data.content?.[0]?.text ?? '').trim();
+      const output = (data.content?.[0]?.text ?? '').trim();
+      return { text: output, model };
     } catch (err) {
       lastError = err;
       if (!err.message?.includes('404') || isLast) {

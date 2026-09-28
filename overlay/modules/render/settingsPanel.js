@@ -8,9 +8,9 @@ import { testAiKey } from '../ai/index.js';
 import { escapeHtml } from '../format.js';
 
 const PROVIDER_LABELS = {
-  gemini: 'Google Gemini (Free tier available)',
-  openai: 'OpenAI (GPT-4o mini)',
-  anthropic: 'Anthropic (Claude 3.5 Haiku)',
+  gemini: 'Google Gemini (Auto-selects Flash e.g. 3.8 Flash, Free tier available)',
+  openai: 'OpenAI (Auto-selects GPT-4o mini)',
+  anthropic: 'Anthropic (Auto-selects Claude 3.5 Haiku)',
 };
 
 export function renderSettingsPanel(container, { settings, onSaved, forceOpen }) {
@@ -227,8 +227,9 @@ function wireUpForm(container, settings, onSaved, forceOpen) {
       btn.textContent = 'Testing…';
 
       try {
-        await testAiKey(provider, key);
-        showFeedback(feedback, `✓ Success! Connected and verified with ${PROVIDER_LABELS[provider] || provider}.`, 'success');
+        const result = await testAiKey(provider, key);
+        const modelNote = result?.model ? ` using <strong>${escapeHtml(result.model)}</strong>` : '';
+        showFeedback(feedback, `✓ Success! Connected and verified with ${PROVIDER_LABELS[provider] || provider}${modelNote}.`, 'success');
       } catch (err) {
         showFeedback(feedback, `✕ ${escapeHtml(err.message)}`, 'error');
       } finally {

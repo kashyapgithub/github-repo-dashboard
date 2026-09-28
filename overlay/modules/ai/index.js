@@ -30,7 +30,8 @@ export async function generateDescription({ provider, apiKey, githubToken, repo 
 
   const readme = await fetchReadmeExcerpt(repo.owner, repo.name, githubToken);
   const prompt = buildPrompt(repo, readme);
-  const rawText = await generate({ apiKey, prompt });
+  const result = await generate({ apiKey, prompt });
+  const rawText = typeof result === 'object' && result.text != null ? result.text : String(result || '');
 
   // Hard cap so a runaway or malformed response can't blow out a card's layout.
   return truncate(rawText.trim(), 600);
@@ -65,8 +66,13 @@ export async function testAiKey(provider, apiKey) {
   if (!cleanKey) {
     throw new Error('Please enter an API key to test.');
   }
-  return await generate({
+  const result = await generate({
     apiKey: cleanKey,
     prompt: 'Reply with the word "Working" and nothing else.',
   });
+  const modelName = typeof result === 'object' && result.model ? result.model : null;
+  return {
+    success: true,
+    model: modelName,
+  };
 }

@@ -18,10 +18,9 @@ On first open, enter:
   private repos). Create one at GitHub → Settings → Developer
   settings → Personal access tokens.
 - **AI provider + key** (optional — skip for stats only, no summaries)
-  - OpenAI: platform.openai.com/api-keys
-  - Anthropic: console.anthropic.com
-  - Gemini: aistudio.google.com/apikey — has a free tier, the
-    cheapest way to run this
+  - Google Gemini: aistudio.google.com/apikey — auto-selects the latest cost-effective Flash models (e.g. `gemini-3.8-flash`, `gemini-3.7-flash`), has a generous free tier
+  - Anthropic: console.anthropic.com — auto-selects lightweight Claude 3.5 Haiku models (no expensive Sonnet or Opus)
+  - OpenAI: platform.openai.com/api-keys — auto-selects fast, low-token `gpt-4o-mini`
 
 Both are stored only in `chrome.storage.local`, on your machine —
 never sent to us or any third party. This extension has no backend of
