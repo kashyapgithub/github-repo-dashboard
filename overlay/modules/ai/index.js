@@ -8,6 +8,7 @@
 import { generateWithOpenAI } from './openai.js';
 import { generateWithAnthropic } from './anthropic.js';
 import { generateWithGemini } from './gemini.js';
+import { generateWithOpenRouter } from './openrouter.js';
 import { fetchReadmeExcerpt } from '../github-api.js';
 import { truncate } from '../format.js';
 
@@ -15,6 +16,7 @@ const PROVIDERS = {
   openai: generateWithOpenAI,
   anthropic: generateWithAnthropic,
   gemini: generateWithGemini,
+  openrouter: generateWithOpenRouter,
 };
 
 /**

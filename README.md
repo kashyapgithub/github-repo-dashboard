@@ -19,6 +19,7 @@ On first open, enter:
   settings → Personal access tokens.
 - **AI provider + key** (optional — skip for stats only, no summaries)
   - Google Gemini: aistudio.google.com/apikey — auto-selects the latest cost-effective Flash models (e.g. `gemini-3.8-flash`, `gemini-3.7-flash`), has a generous free tier
+  - OpenRouter: openrouter.ai/keys — unified access to 300+ models, auto-prioritizes high-speed, low-cost options (`gemini-2.0-flash`, `deepseek-chat`, `gpt-4o-mini`, `claude-3.5-haiku`, `llama-3.3-70b:free`)
   - Anthropic: console.anthropic.com — auto-selects lightweight Claude 3.5 Haiku models (no expensive Sonnet or Opus)
   - OpenAI: platform.openai.com/api-keys — auto-selects fast, low-token `gpt-4o-mini`
 

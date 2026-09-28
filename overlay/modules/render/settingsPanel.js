@@ -11,6 +11,21 @@ const PROVIDER_LABELS = {
   gemini: 'Google Gemini (Auto-selects Flash e.g. 3.8 Flash, Free tier available)',
   openai: 'OpenAI (Auto-selects GPT-4o mini)',
   anthropic: 'Anthropic (Auto-selects Claude 3.5 Haiku)',
+  openrouter: 'OpenRouter (Auto-selects Gemini 2.0 Flash / DeepSeek / GPT-4o mini / Haiku)',
+};
+
+const PROVIDER_PLACEHOLDERS = {
+  gemini: 'AIzaSy…',
+  openai: 'sk-…',
+  anthropic: 'sk-ant-…',
+  openrouter: 'sk-or-v1-…',
+};
+
+const PROVIDER_HINTS = {
+  gemini: 'Free tier available via <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="link-external">Google AI Studio ↗</a>.',
+  openai: 'Requires key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" class="link-external">OpenAI Platform ↗</a>.',
+  anthropic: 'Requires key from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="link-external">Anthropic Console ↗</a>.',
+  openrouter: 'Unified access to 300+ models. Get your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" class="link-external">openrouter.ai/keys ↗</a>.',
 };
 
 export function renderSettingsPanel(container, { settings, onSaved, forceOpen }) {
@@ -108,7 +123,7 @@ export function renderSettingsPanel(container, { settings, onSaved, forceOpen })
                       id="input-key-${value}"
                       type="password"
                       name="key_${value}"
-                      placeholder="API key…"
+                      placeholder="${PROVIDER_PLACEHOLDERS[value] || 'API key…'}"
                       value="${escapeHtml(settings.aiApiKeys?.[value] || '')}"
                       autocomplete="off"
                       spellcheck="false"
@@ -123,6 +138,7 @@ export function renderSettingsPanel(container, { settings, onSaved, forceOpen })
                     </button>
                   </div>
                   <div class="token-feedback ai-key-feedback" id="feedback-key-${value}" hidden></div>
+                  <p class="settings__hint">${PROVIDER_HINTS[value] || ''}</p>
                 </div>
               `
             )

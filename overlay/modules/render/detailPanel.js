@@ -296,7 +296,7 @@ function renderAiSlot(info, canRetry = false) {
   }
   return `
     <div class="ai-no-key">
-      <p class="ai-no-key__text">Automated AI summaries are disabled. Configure an AI API key (Google Gemini, OpenAI, or Claude) in Settings to see summaries for each repo.</p>
+      <p class="ai-no-key__text">Automated AI summaries are disabled. Configure an AI API key (Google Gemini, OpenRouter, OpenAI, or Claude) in Settings to see summaries for each repo.</p>
       <button type="button" class="ai-no-key__btn" id="btn-open-settings-prompt">Configure in Settings</button>
     </div>
   `;
