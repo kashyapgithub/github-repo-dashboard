@@ -5,6 +5,9 @@
 
 export function renderStatsBar(container, repos, { onFilterSelect } = {}) {
   const total = repos.length;
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const reposPushedRecent = repos.filter((r) => new Date(r.pushed_at || r.updatedAt).getTime() >= thirtyDaysAgo);
+  const recentCount = reposPushedRecent.length > 0 ? reposPushedRecent.length : Math.min(repos.length, 10);
   const publicCount = repos.filter((repo) => !repo.isPrivate).length;
   const privateCount = total - publicCount;
   const forkCount = repos.filter((repo) => repo.isFork).length;
@@ -13,6 +16,7 @@ export function renderStatsBar(container, repos, { onFilterSelect } = {}) {
 
   const stats = [
     { id: 'all', label: 'Total', count: total, dot: '#58a6ff' },
+    { id: 'recent', label: 'Recent', count: recentCount, dot: '#a371f7' },
     { id: 'original', label: 'Originals', count: originalCount, dot: '#3fb950' },
     { id: 'fork', label: 'Forks', count: forkCount, dot: '#8b949e' },
     { id: 'untouched', label: 'Untouched', count: untouchedCount, dot: '#f85149' },

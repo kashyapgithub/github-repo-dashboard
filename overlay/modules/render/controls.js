@@ -10,6 +10,7 @@ export function renderControls(container, {
   onViewModeChange,
   onGroupByChange,
   onToggleInspector,
+  onOpenCommits,
   onRefresh,
 }) {
   let currentViewMode = initialViewMode;
@@ -29,6 +30,7 @@ export function renderControls(container, {
 
       <div class="controls-bar__filter-chips" role="tablist" aria-label="Filter repositories">
         <button type="button" class="filter-chip filter-chip--active" data-filter="all">All</button>
+        <button type="button" class="filter-chip" data-filter="recent">Recently Edited</button>
         <button type="button" class="filter-chip" data-filter="original">Originals</button>
         <button type="button" class="filter-chip" data-filter="fork">Forks</button>
         <button type="button" class="filter-chip" data-filter="untouched">Untouched</button>
@@ -57,6 +59,7 @@ export function renderControls(container, {
       <div class="controls-bar__select-wrap" title="Group repositories by">
         <select id="repo-group" aria-label="Group repositories by">
           <option value="none" ${currentGroupBy === 'none' ? 'selected' : ''}>No grouping</option>
+          <option value="folder" ${currentGroupBy === 'folder' ? 'selected' : ''}>Group by Folder</option>
           <option value="language" ${currentGroupBy === 'language' ? 'selected' : ''}>Group by Language</option>
           <option value="type" ${currentGroupBy === 'type' ? 'selected' : ''}>Group by Type</option>
           <option value="year" ${currentGroupBy === 'year' ? 'selected' : ''}>Group by Year</option>
@@ -78,6 +81,15 @@ export function renderControls(container, {
           <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
         </svg>
       </div>
+
+      <!-- Recent Commits Popup Button -->
+      <button type="button" class="controls-bar__btn controls-bar__btn--commits" id="btn-recent-commits" title="View Recent Commits across recently edited repositories (C)" aria-label="View Recent Commits">
+        <svg class="icon-commit" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M11.93 8.5a4.002 4.002 0 0 1-7.86 0H.75a.75.75 0 0 1 0-1.5h3.32a4.002 4.002 0 0 1 7.86 0h3.32a.75.75 0 0 1 0 1.5h-3.32Zm-1.43-.75a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z"/>
+        </svg>
+        <span class="controls-bar__btn-label">Recent Commits</span>
+        <kbd class="controls-bar__kbd-subtle">C</kbd>
+      </button>
 
       <!-- Inspector Toggle -->
       <button type="button" class="controls-bar__btn ${isInspectorOpen ? 'controls-bar__btn--active' : ''}" id="btn-toggle-inspector" title="Toggle Details Inspector (I)" aria-label="Toggle Details Inspector">
@@ -109,13 +121,14 @@ export function renderControls(container, {
   const refreshBtn = container.querySelector('#repo-refresh');
   const viewButtons = container.querySelectorAll('.view-switcher__btn');
   const inspectorBtn = container.querySelector('#btn-toggle-inspector');
+  const commitsBtn = container.querySelector('#btn-recent-commits');
 
   function applyAndNotify() {
     const query = searchInput.value.trim().toLowerCase();
     const sortBy = sortSelect.value;
     clearBtn.hidden = !query;
 
-    const filtered = fullRepoList.filter((repo) => matchesFilter(repo, currentFilter) && matchesQuery(repo, query));
+    const filtered = fullRepoList.filter((repo) => matchesFilter(repo, currentFilter, fullRepoList) && matchesQuery(repo, query));
     onFilterChange(sortRepos(filtered, sortBy), { groupBy: currentGroupBy, viewMode: currentViewMode });
   }
 
@@ -145,6 +158,7 @@ export function renderControls(container, {
   container.setFilter = setFilter;
   container.setViewMode = setViewMode;
   container.setInspectorOpen = setInspectorOpen;
+  container.applyFilter = applyAndNotify;
 
   container.setRepos = (repos) => {
     fullRepoList = repos;
@@ -185,6 +199,10 @@ export function renderControls(container, {
     if (onToggleInspector) onToggleInspector(isInspectorOpen);
   });
 
+  commitsBtn?.addEventListener('click', () => {
+    if (onOpenCommits) onOpenCommits();
+  });
+
   if (refreshBtn && onRefresh) {
     refreshBtn.addEventListener('click', () => {
       refreshBtn.classList.add('is-refreshing');
@@ -195,13 +213,33 @@ export function renderControls(container, {
   }
 }
 
-function matchesFilter(repo, filterBy) {
+function matchesFilter(repo, filterBy, allRepos = []) {
+  if (filterBy === 'recent') return isRecentRepo(repo, allRepos);
   if (filterBy === 'original') return !repo.isFork;
   if (filterBy === 'fork') return repo.isFork;
   if (filterBy === 'untouched') return repo.looksUntouched;
   if (filterBy === 'private') return repo.isPrivate;
   return true; // 'all'
 }
+
+function isRecentRepo(repo, allRepos = []) {
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const pushedTime = new Date(repo.pushed_at || repo.updatedAt).getTime();
+  if (pushedTime >= thirtyDaysAgo) return true;
+
+  // Fallback: top 15 most recently updated repos
+  if (allRepos && allRepos.length > 0) {
+    const topIds = new Set(
+      [...allRepos]
+        .sort((a, b) => new Date(b.pushed_at || b.updatedAt).getTime() - new Date(a.pushed_at || a.updatedAt).getTime())
+        .slice(0, 15)
+        .map((r) => r.id)
+    );
+    return topIds.has(repo.id);
+  }
+  return false;
+}
+
 
 function matchesQuery(repo, query) {
   if (!query) return true;
@@ -214,21 +252,23 @@ function matchesQuery(repo, query) {
 
 function sortRepos(repos, sortBy) {
   const copy = [...repos];
-  if (sortBy === 'stars') {
-    return copy.sort((a, b) => {
+  return copy.sort((a, b) => {
+    // Pinned repos always float to the top
+    if (a.isPinned && !b.isPinned) return -1;
+    if (!a.isPinned && b.isPinned) return 1;
+
+    if (sortBy === 'stars') {
       const aVal = a.parentStars != null ? a.parentStars : a.stars;
       const bVal = b.parentStars != null ? b.parentStars : b.stars;
       return bVal - aVal;
-    });
-  }
-  if (sortBy === 'forks') {
-    return copy.sort((a, b) => {
+    }
+    if (sortBy === 'forks') {
       const aVal = a.parent?.forksCount != null ? a.parent.forksCount : (a.forksCount ?? 0);
       const bVal = b.parent?.forksCount != null ? b.parent.forksCount : (b.forksCount ?? 0);
       return bVal - aVal;
-    });
-  }
-  if (sortBy === 'name') return copy.sort((a, b) => a.name.localeCompare(b.name));
-  return copy.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)); // 'updated'
+    }
+    if (sortBy === 'name') return copy.sort((a, b) => a.name.localeCompare(b.name));
+    return new Date(b.updatedAt) - new Date(a.updatedAt); // 'updated'
+  });
 }
 

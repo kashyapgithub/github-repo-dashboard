@@ -10,6 +10,12 @@ import {
   setCachedDescription,
   getUiPreferences,
   saveUiPreferences,
+  getPinnedRepoIds,
+  togglePinnedRepo,
+  getFolders,
+  getRepoFolders,
+  setRepoFolder,
+  removeRepoFromFolder,
 } from './modules/storage.js';
 import { fetchAllRepos, enrichForksWithParent } from './modules/github-api.js';
 import { generateDescription } from './modules/ai/index.js';
@@ -17,9 +23,11 @@ import { runWithConcurrency } from './modules/concurrency.js';
 import { renderSettingsPanel } from './modules/render/settingsPanel.js';
 import { renderStatsBar } from './modules/render/statsBar.js';
 import { renderControls } from './modules/render/controls.js';
+import { renderFolderBar } from './modules/render/folderBar.js';
 import { createRepoRow, setRowStatus } from './modules/render/repoRow.js';
 import { createRepoTile } from './modules/render/repoTile.js';
 import { renderDetailPanel } from './modules/render/detailPanel.js';
+import { renderCommitsPanel } from './modules/render/commitsPanel.js';
 import { escapeHtml } from './modules/format.js';
 
 const AI_REQUEST_CONCURRENCY = 3;
@@ -40,8 +48,13 @@ export function closeWindowSafely() {
 }
 
 async function init() {
-  const settings = await getSettings();
-  const uiPrefs = await getUiPreferences();
+  const [settings, uiPrefs, pinnedIds, folders, repoFolders] = await Promise.all([
+    getSettings(),
+    getUiPreferences(),
+    getPinnedRepoIds(),
+    getFolders(),
+    getRepoFolders(),
+  ]);
 
   if (!settings.githubToken) {
     showFirstRunSetup(settings);
@@ -108,6 +121,13 @@ async function init() {
     return;
   }
 
+  // Decorate repos with pinned and folder states
+  const pinnedSet = new Set(pinnedIds);
+  for (const repo of repos) {
+    repo.isPinned = pinnedSet.has(repo.id);
+    repo.folderId = repoFolders[repo.id] || null;
+  }
+
   // Restore main layout with dual-view (List or Floor Tiles) and collapsible Detail Inspector
   shell.mainArea.innerHTML = `
     <div class="content-panel">
@@ -145,7 +165,7 @@ async function init() {
     shell.headerCount.hidden = false;
   }
 
-  runDashboard(shell, repos, settings, uiPrefs);
+  runDashboard(shell, repos, settings, uiPrefs, { folders, repoFolders });
 }
 
 function showFirstRunSetup(settings) {
@@ -237,8 +257,10 @@ function renderShell(uiPrefs) {
     </header>
     <section class="stats-bar" data-slot="stats"></section>
     <section class="controls-bar" data-slot="controls"></section>
+    <section class="folder-bar" data-slot="folders"></section>
     <main class="main-area" data-slot="main"></main>
     <footer class="status-bar" data-slot="footer"></footer>
+    <div class="commits-panel-slot" data-slot="commits"></div>
   `;
 
   return {
@@ -246,6 +268,8 @@ function renderShell(uiPrefs) {
     settingsSlot: app.querySelector('[data-slot="settings"]'),
     statsSlot: app.querySelector('[data-slot="stats"]'),
     controlsSlot: app.querySelector('[data-slot="controls"]'),
+    foldersSlot: app.querySelector('[data-slot="folders"]'),
+    commitsSlot: app.querySelector('[data-slot="commits"]'),
     mainArea: app.querySelector('[data-slot="main"]'),
     footer: app.querySelector('[data-slot="footer"]'),
     closeBtn: app.querySelector('#btn-close-window'),
@@ -256,10 +280,12 @@ function renderShell(uiPrefs) {
   };
 }
 
-function runDashboard(shell, repos, settings, uiPrefs) {
+function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolders = {} } = {}) {
   let currentViewMode = uiPrefs.viewMode;
   let currentGroupBy = uiPrefs.groupBy;
   let isInspectorOpen = uiPrefs.inspectorOpen;
+  let currentFolders = [...folders];
+  let activeFolderId = uiPrefs.activeFolderId || 'all';
 
   const rowsByRepoId = new Map();
   const tilesByRepoId = new Map();
@@ -269,6 +295,117 @@ function runDashboard(shell, repos, settings, uiPrefs) {
 
   function findRepo(id) {
     return repos.find((repo) => repo.id === id);
+  }
+
+  function computeFolderCounts() {
+    let pinned = 0;
+    const folderCounts = {};
+    for (const f of currentFolders) {
+      folderCounts[f.id] = 0;
+    }
+    for (const r of repos) {
+      if (r.isPinned) pinned++;
+      if (r.folderId && folderCounts[r.folderId] !== undefined) {
+        folderCounts[r.folderId]++;
+      }
+    }
+    return {
+      total: repos.length,
+      pinned,
+      folderCounts,
+    };
+  }
+
+  const initialCounts = computeFolderCounts();
+  const folderBar = renderFolderBar(shell.foldersSlot, {
+    folders: currentFolders,
+    activeFolderId,
+    totalCount: initialCounts.total,
+    pinnedCount: initialCounts.pinned,
+    folderCounts: initialCounts.folderCounts,
+    onSelectFolder: (fId) => {
+      activeFolderId = fId;
+      saveUiPreferences({ activeFolderId: fId });
+      shell.controlsSlot.applyFilter?.();
+    },
+    onFolderCreated: (newFolder) => {
+      currentFolders.push(newFolder);
+      refreshDetailPanel();
+    },
+    onFolderUpdated: (updatedFolder) => {
+      const idx = currentFolders.findIndex((f) => f.id === updatedFolder.id);
+      if (idx >= 0) currentFolders[idx] = updatedFolder;
+      for (const r of repos) {
+        if (r.folderId === updatedFolder.id) {
+          rowsByRepoId.get(r.id)?.updateFolder?.(updatedFolder);
+          tilesByRepoId.get(r.id)?.updateFolder?.(updatedFolder);
+        }
+      }
+      refreshDetailPanel();
+    },
+    onFolderDeleted: (deletedFolderId) => {
+      currentFolders = currentFolders.filter((f) => f.id !== deletedFolderId);
+      for (const r of repos) {
+        if (r.folderId === deletedFolderId) {
+          r.folderId = null;
+          rowsByRepoId.get(r.id)?.updateFolder?.(null);
+          tilesByRepoId.get(r.id)?.updateFolder?.(null);
+        }
+      }
+      folderBar.updateCounts(computeFolderCounts());
+      refreshDetailPanel();
+      shell.controlsSlot.applyFilter?.();
+    },
+  });
+
+  const commitsPanel = renderCommitsPanel(shell.commitsSlot, {
+    token: settings.githubToken,
+    repos,
+    onOpenRepo: (repoId) => {
+      selectRepo(repoId);
+    },
+  });
+
+  async function handleTogglePin(repoId) {
+    const repo = findRepo(repoId);
+    if (!repo) return;
+    const isNowPinned = await togglePinnedRepo(repoId);
+    repo.isPinned = isNowPinned;
+
+    rowsByRepoId.get(repoId)?.updatePin?.(isNowPinned);
+    tilesByRepoId.get(repoId)?.updatePin?.(isNowPinned);
+
+    folderBar.updateCounts(computeFolderCounts());
+
+    if (selectedRepoId === repoId) {
+      refreshDetailPanel();
+    }
+    shell.controlsSlot.applyFilter?.();
+  }
+
+  async function handleAssignFolder(repoId, folderId) {
+    const repo = findRepo(repoId);
+    if (!repo) return;
+
+    if (folderId) {
+      await setRepoFolder(repoId, folderId);
+      repo.folderId = folderId;
+    } else {
+      await removeRepoFromFolder(repoId);
+      repo.folderId = null;
+    }
+
+    const assignedFolder = currentFolders.find((f) => f.id === repo.folderId) || null;
+
+    rowsByRepoId.get(repoId)?.updateFolder?.(assignedFolder);
+    tilesByRepoId.get(repoId)?.updateFolder?.(assignedFolder);
+
+    folderBar.updateCounts(computeFolderCounts());
+
+    if (selectedRepoId === repoId) {
+      refreshDetailPanel();
+    }
+    shell.controlsSlot.applyFilter?.();
   }
 
   async function regenerateSingleRepo(repoId) {
@@ -311,6 +448,13 @@ function runDashboard(shell, repos, settings, uiPrefs) {
     renderDetailPanel(shell.detail, repo, descriptionsById.get(selectedRepoId), {
       onRegenerate: regenerateSingleRepo,
       onOpenSettings: () => shell.settingsSlot.querySelector('.settings__toggle')?.click(),
+      onViewCommits: (targetRepo) => {
+        commitsPanel.open({ repoId: targetRepo.id });
+      },
+      onTogglePin: handleTogglePin,
+      onAssignFolder: handleAssignFolder,
+      onCreateFolder: () => folderBar.openNewFolderModal(),
+      folders: currentFolders,
       githubToken: settings.githubToken,
       onParentLoaded: (enrichedRepo) => {
         rowsByRepoId.get(enrichedRepo.id)?.updateStars?.();
@@ -355,11 +499,21 @@ function runDashboard(shell, repos, settings, uiPrefs) {
 
   // Pre-instantiate both rows and tiles for instant lag-free switching
   for (const repo of repos) {
-    rowsByRepoId.set(repo.id, createRepoRow(repo, { onSelect: selectRepo }));
+    const folderObj = currentFolders.find((f) => f.id === repo.folderId) || null;
+    rowsByRepoId.set(
+      repo.id,
+      createRepoRow(repo, {
+        onSelect: selectRepo,
+        onTogglePin: handleTogglePin,
+        initialFolder: folderObj,
+      })
+    );
     tilesByRepoId.set(
       repo.id,
       createRepoTile(repo, {
         onSelect: selectRepo,
+        onTogglePin: handleTogglePin,
+        initialFolder: folderObj,
         initialAiEntry: descriptionsById.get(repo.id),
       })
     );
@@ -382,15 +536,33 @@ function runDashboard(shell, repos, settings, uiPrefs) {
       shell.listView.classList.remove('repo-view--hidden');
       shell.gridView.classList.add('repo-view--hidden');
       shell.list.innerHTML = '';
-      for (const repo of filtered) {
-        shell.list.appendChild(rowsByRepoId.get(repo.id));
+      if (groupBy === 'none') {
+        for (const repo of filtered) {
+          shell.list.appendChild(rowsByRepoId.get(repo.id));
+        }
+      } else {
+        const groups = groupRepositories(filtered, groupBy, currentFolders);
+        for (const group of groups) {
+          if (group.title && group.repos.length > 0) {
+            const header = document.createElement('div');
+            header.className = 'repo-list-group-header';
+            header.innerHTML = `
+              <span class="repo-list-group-title">${escapeHtml(group.title)}</span>
+              <span class="repo-list-group-count">${group.repos.length}</span>
+            `;
+            shell.list.appendChild(header);
+          }
+          for (const repo of group.repos) {
+            shell.list.appendChild(rowsByRepoId.get(repo.id));
+          }
+        }
       }
     } else {
       shell.gridView.classList.remove('repo-view--hidden');
       shell.listView.classList.add('repo-view--hidden');
       shell.grid.innerHTML = '';
 
-      const groups = groupRepositories(filtered, groupBy);
+      const groups = groupRepositories(filtered, groupBy, currentFolders);
       for (const group of groups) {
         if (group.title) {
           const groupEl = document.createElement('section');
@@ -434,20 +606,29 @@ function runDashboard(shell, repos, settings, uiPrefs) {
     initialGroupBy: currentGroupBy,
     inspectorOpen: isInspectorOpen,
     onFilterChange: (filtered, { groupBy, viewMode }) => {
-      renderVisibleRepos(filtered, { groupBy, viewMode });
+      let folderFiltered = filtered;
+      if (activeFolderId === 'pinned') {
+        folderFiltered = filtered.filter((r) => r.isPinned);
+      } else if (activeFolderId && activeFolderId !== 'all') {
+        folderFiltered = filtered.filter((r) => r.folderId === activeFolderId);
+      }
+      renderVisibleRepos(folderFiltered, { groupBy, viewMode });
     },
     onViewModeChange: (newMode) => {
       currentViewMode = newMode;
       saveUiPreferences({ viewMode: newMode });
-      renderVisibleRepos(visibleRepos, { viewMode: newMode });
+      shell.controlsSlot.applyFilter?.();
     },
     onGroupByChange: (newGroup) => {
       currentGroupBy = newGroup;
       saveUiPreferences({ groupBy: newGroup });
-      renderVisibleRepos(visibleRepos, { groupBy: newGroup });
+      shell.controlsSlot.applyFilter?.();
     },
     onToggleInspector: (isOpen) => {
       toggleInspector(isOpen);
+    },
+    onOpenCommits: () => {
+      commitsPanel.open();
     },
     onRefresh: async () => {
       await init();
@@ -462,7 +643,9 @@ function runDashboard(shell, repos, settings, uiPrefs) {
     () => selectedRepoId,
     findRepo,
     () => currentViewMode,
-    () => toggleInspector()
+    () => toggleInspector(),
+    () => (commitsPanel.isOpen() ? commitsPanel.close() : commitsPanel.open()),
+    handleTogglePin
   );
 
   fillInAiDescriptions(repos, rowsByRepoId, tilesByRepoId, descriptionsById, settings, () => selectedRepoId, refreshDetailPanel);
@@ -478,9 +661,50 @@ function runDashboard(shell, repos, settings, uiPrefs) {
   }
 }
 
-function groupRepositories(repoList, groupBy) {
+function groupRepositories(repoList, groupBy, folders = []) {
   if (groupBy === 'none') {
     return [{ id: 'all', title: null, repos: repoList }];
+  }
+
+  if (groupBy === 'folder') {
+    const res = [];
+    const usedRepoIds = new Set();
+
+    // 1. Folders in user-defined order
+    for (const folder of folders) {
+      const folderRepos = repoList.filter((r) => r.folderId === folder.id);
+      if (folderRepos.length > 0) {
+        res.push({
+          id: `folder-${folder.id}`,
+          title: folder.name,
+          repos: folderRepos,
+        });
+        folderRepos.forEach((r) => usedRepoIds.add(r.id));
+      }
+    }
+
+    // 2. Unfiled Pinned Repos (Keep Pin Icon)
+    const unfiledPinned = repoList.filter((r) => !usedRepoIds.has(r.id) && r.isPinned);
+    if (unfiledPinned.length > 0) {
+      res.push({
+        id: 'folder-pinned-unfiled',
+        title: folders.length > 0 ? '📌 Pinned (Unfiled)' : '📌 Pinned Repositories',
+        repos: unfiledPinned,
+      });
+      unfiledPinned.forEach((r) => usedRepoIds.add(r.id));
+    }
+
+    // 3. Other Unfiled Repos
+    const unfiledOthers = repoList.filter((r) => !usedRepoIds.has(r.id));
+    if (unfiledOthers.length > 0) {
+      res.push({
+        id: 'folder-unfiled',
+        title: 'Unfiled Repositories',
+        repos: unfiledOthers,
+      });
+    }
+
+    return res.length > 0 ? res : [{ id: 'all', title: null, repos: repoList }];
   }
 
   if (groupBy === 'language') {
@@ -537,13 +761,24 @@ function updateFooter(footer, visibleCount, totalCount, viewMode) {
       <span class="shortcut-item"><kbd>Esc</kbd> Close</span>
       <span class="shortcut-item"><kbd>${isTiles ? '←↑↓→' : '↑↓'}</kbd> Navigate</span>
       <span class="shortcut-item"><kbd>Enter</kbd> Open</span>
+      <span class="shortcut-item"><kbd>P</kbd> Pin</span>
       <span class="shortcut-item"><kbd>I</kbd> Details</span>
+      <span class="shortcut-item"><kbd>C</kbd> Commits</span>
       <span class="shortcut-item"><kbd>/</kbd> Search</span>
     </div>
   `;
 }
 
-function setUpKeyboardShortcuts(shell, moveSelection, getSelectedId, findRepo, getViewMode, toggleInspector) {
+function setUpKeyboardShortcuts(
+  shell,
+  moveSelection,
+  getSelectedId,
+  findRepo,
+  getViewMode,
+  toggleInspector,
+  toggleCommits,
+  togglePin
+) {
   if (activeKeydownHandler) {
     document.removeEventListener('keydown', activeKeydownHandler);
   }
@@ -602,9 +837,16 @@ function setUpKeyboardShortcuts(shell, moveSelection, getSelectedId, findRepo, g
     } else if (event.key === 'Enter') {
       const repo = findRepo(getSelectedId());
       if (repo) window.open(repo.url, '_blank', 'noopener');
+    } else if (event.key === 'p' || event.key === 'P') {
+      event.preventDefault();
+      const selId = getSelectedId();
+      if (selId && togglePin) togglePin(selId);
     } else if (event.key === 'i' || event.key === 'I') {
       event.preventDefault();
       toggleInspector();
+    } else if (event.key === 'c' || event.key === 'C') {
+      event.preventDefault();
+      toggleCommits?.();
     }
   };
 

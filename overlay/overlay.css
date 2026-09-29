@@ -2369,3 +2369,1133 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }
+
+/* ==========================================================================
+   Controls Bar Recent Commits Button
+   ========================================================================== */
+
+.controls-bar__btn--commits {
+  width: auto;
+  padding: 0 12px;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--apple-text-primary);
+}
+
+.controls-bar__btn--commits:hover {
+  background: var(--apple-surface-hover);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.controls-bar__btn--commits .icon-commit {
+  width: 14px;
+  height: 14px;
+  color: var(--apple-purple);
+  flex-shrink: 0;
+}
+
+.controls-bar__kbd-subtle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: var(--apple-text-tertiary);
+  margin-left: 2px;
+}
+
+/* ==========================================================================
+   Recent Commits Popup Panel (macOS Sheet Modal)
+   ========================================================================== */
+
+.commits-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 120;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.commits-modal-backdrop.modal-backdrop--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.commits-modal {
+  width: 92%;
+  max-width: 720px;
+  height: 82vh;
+  max-height: 820px;
+  background: #141519;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transform: scale(0.96) translateY(12px);
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.commits-modal-backdrop.modal-backdrop--visible .commits-modal {
+  transform: scale(1) translateY(0);
+}
+
+.commits-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.commits-header-icon {
+  width: 24px;
+  height: 24px;
+  color: #bf80ff;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.commits-subtitle {
+  font-size: 12px;
+  color: var(--apple-text-tertiary);
+  margin: 3px 0 0;
+}
+
+.commits-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--apple-border);
+}
+
+.commits-toolbar__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.commits-toolbar__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Scope Selector */
+.commits-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.commits-select-wrap select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--apple-surface);
+  border: 1px solid var(--apple-border);
+  border-radius: var(--radius-pill);
+  color: var(--apple-text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  height: 32px;
+  padding: 0 28px 0 12px;
+  cursor: pointer;
+  outline: none;
+  max-width: 210px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.commits-select-wrap select:hover {
+  background: var(--apple-surface-hover);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.commits-select-wrap select:focus {
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 2px var(--apple-blue-subtle);
+}
+
+/* Commits Search */
+.commits-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 140px;
+}
+
+.commits-search-icon {
+  position: absolute;
+  left: 10px;
+  width: 13px;
+  height: 13px;
+  color: var(--apple-text-tertiary);
+  pointer-events: none;
+}
+
+.commits-search-wrap input {
+  width: 100%;
+  height: 32px;
+  padding: 0 26px 0 30px;
+  background: var(--apple-surface);
+  border: 1px solid var(--apple-border);
+  border-radius: var(--radius-pill);
+  color: var(--apple-text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.commits-search-wrap input:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.commits-search-wrap input:focus {
+  background: var(--apple-canvas);
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 2px var(--apple-blue-subtle);
+}
+
+.commits-search-clear {
+  position: absolute;
+  right: 8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--apple-text-secondary);
+  font-size: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.commits-search-clear:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--apple-text-primary);
+}
+
+.btn-commits-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--apple-surface);
+  border: 1px solid var(--apple-border);
+  color: var(--apple-text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-commits-refresh:hover {
+  background: var(--apple-surface-hover);
+  color: var(--apple-text-primary);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.btn-commits-refresh.is-refreshing .icon-refresh {
+  animation: spin 0.8s linear infinite;
+}
+
+/* Commits Meta Bar */
+.commits-meta-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 2px;
+  font-size: 11px;
+  color: var(--apple-text-tertiary);
+  border-bottom: 1px solid var(--apple-border-subtle);
+  flex-shrink: 0;
+}
+
+.commits-meta-badge {
+  font-weight: 600;
+  color: var(--apple-text-secondary);
+}
+
+.commits-meta-scope {
+  color: var(--apple-text-tertiary);
+  font-style: italic;
+}
+
+/* Commits Scroll Container */
+.commits-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 2px 8px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.commits-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Commit Card */
+.commit-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.16s ease;
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.commit-card:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.commit-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.commit-card__header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.commit-card__header-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Repository Pill on Commit Card */
+.commit-repo-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-pill);
+  padding: 3px 9px 3px 7px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--apple-text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.commit-repo-pill:hover {
+  background: rgba(0, 113, 227, 0.18);
+  border-color: rgba(0, 113, 227, 0.45);
+  color: var(--apple-blue-on-dark);
+}
+
+.commit-repo-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.commit-repo-pill__lock {
+  font-size: 10px;
+  margin-left: 2px;
+}
+
+/* SHA Pill */
+.commit-sha-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--apple-text-tertiary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.commit-sha-pill:hover {
+  color: var(--apple-blue-on-dark);
+  border-color: rgba(0, 113, 227, 0.35);
+  background: rgba(0, 113, 227, 0.1);
+}
+
+.commit-sha-icon {
+  width: 11px;
+  height: 11px;
+  opacity: 0.7;
+}
+
+/* Verified Badge */
+.commit-verified-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #30d158;
+  background: rgba(48, 209, 88, 0.12);
+  border: 1px solid rgba(48, 209, 88, 0.28);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+}
+
+/* Timestamp */
+.commit-time {
+  font-size: 11.5px;
+  color: var(--apple-text-tertiary);
+  white-space: nowrap;
+}
+
+/* Headline */
+.commit-headline {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--apple-text-primary);
+  line-height: 1.4;
+  margin: 0;
+  word-break: break-word;
+}
+
+.commit-headline-link {
+  color: var(--apple-text-primary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.commit-headline-link:hover {
+  color: var(--apple-blue-on-dark);
+}
+
+/* Extended message body */
+.commit-extended-desc {
+  margin-top: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.commit-body-text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--apple-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+/* Footer */
+.commit-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.commit-author-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+}
+
+.commit-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  object-fit: cover;
+}
+
+.commit-avatar-fallback {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--apple-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.commit-author-name {
+  color: var(--apple-text-secondary);
+  font-weight: 500;
+}
+
+.commit-author-login {
+  color: var(--apple-text-tertiary);
+  font-size: 11px;
+}
+
+.commit-ext-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--apple-text-tertiary);
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.commit-ext-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+.commit-ext-btn:hover {
+  color: var(--apple-blue-on-dark);
+}
+
+/* Commits Empty & Error States */
+.commits-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--apple-text-tertiary);
+}
+
+.commits-empty-icon {
+  width: 38px;
+  height: 38px;
+  color: var(--apple-text-quaternary);
+  margin-bottom: 12px;
+}
+
+.commits-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--apple-text-secondary);
+  margin: 0 0 6px;
+}
+
+.commits-empty-desc {
+  font-size: 12px;
+  color: var(--apple-text-tertiary);
+  margin: 0 0 16px;
+  max-width: 320px;
+  line-height: 1.45;
+}
+
+.btn-retry-commits {
+  margin-top: 4px;
+  height: 32px;
+  padding: 0 16px;
+  font-size: 12px;
+}
+
+/* Skeleton Loading */
+.commit-card--skeleton {
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.commit-skeleton-pill {
+  width: 110px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.05) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.5s infinite;
+}
+
+.commit-skeleton-text {
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.05) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.5s infinite;
+}
+
+@keyframes skeletonShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ==========================================================================
+   FOLDER BAR & NAVIGATION PILLS
+   ========================================================================== */
+
+.folder-bar {
+  display: flex;
+  align-items: center;
+  padding: 8px 18px;
+  background: rgba(18, 19, 22, 0.75);
+  backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid var(--apple-border-subtle);
+  position: relative;
+  z-index: 10;
+  min-height: 44px;
+}
+
+.folder-bar-inner {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.folder-bar__scroll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.folder-bar__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.folder-pill-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.folder-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--apple-border);
+  color: var(--apple-text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.folder-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--apple-text-primary);
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-0.5px);
+}
+
+.folder-pill:active {
+  transform: scale(0.98);
+}
+
+.folder-pill--active {
+  background: rgba(0, 113, 227, 0.22);
+  border-color: var(--apple-blue);
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(0, 113, 227, 0.35);
+}
+
+.folder-pill--pinned {
+  border-color: rgba(255, 214, 10, 0.25);
+}
+
+.folder-pill--pinned.folder-pill--active {
+  background: rgba(255, 214, 10, 0.18);
+  border-color: rgba(255, 214, 10, 0.7);
+  color: #ffd60a;
+  box-shadow: 0 0 14px rgba(255, 214, 10, 0.3);
+}
+
+.folder-pill--custom {
+  border-color: color-mix(in srgb, var(--folder-color, #0071e3) 30%, rgba(255, 255, 255, 0.08));
+}
+
+.folder-pill--custom.folder-pill--active {
+  background: color-mix(in srgb, var(--folder-color, #0071e3) 22%, transparent);
+  border-color: var(--folder-color, #0071e3);
+  color: #ffffff;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--folder-color, #0071e3) 35%, transparent);
+}
+
+.folder-pill__icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.folder-pill__name {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.folder-pill__count {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--apple-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  transition: all 0.16s ease;
+}
+
+.folder-pill--active .folder-pill__count {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.folder-pill--pinned.folder-pill--active .folder-pill__count {
+  background: rgba(255, 214, 10, 0.25);
+  color: #ffd60a;
+}
+
+.folder-pill__edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: -6px;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: var(--apple-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.15s ease;
+  z-index: 2;
+}
+
+.folder-pill__edit-btn svg {
+  width: 10px;
+  height: 10px;
+}
+
+.folder-pill-wrap:hover .folder-pill__edit-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.folder-pill__edit-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  transform: scale(1.1);
+}
+
+.folder-pill--add {
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: var(--apple-text-tertiary);
+}
+
+.folder-pill--add:hover {
+  border-color: var(--apple-blue-on-dark);
+  color: var(--apple-blue-on-dark);
+  background: var(--apple-blue-subtle);
+}
+
+.folder-pill__add-plus {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  margin-right: -2px;
+}
+
+/* ==========================================================================
+   FOLDER MODAL DIALOG & PICKERS
+   ========================================================================== */
+
+.folder-modal-backdrop {
+  z-index: 1000;
+}
+
+.folder-modal {
+  max-width: 440px;
+  width: 90%;
+  padding: 24px;
+}
+
+.folder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.folder-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.2);
+}
+
+.commit-repo-pill__lock-icon {
+  width: 11px;
+  height: 11px;
+  color: var(--apple-amber);
+  margin-left: 2px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.folder-color-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.color-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.color-dot:hover {
+  transform: scale(1.15);
+}
+
+.color-dot--active {
+  border-color: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+  transform: scale(1.15);
+}
+
+.folder-modal__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--apple-border-subtle);
+}
+
+.folder-modal__actions-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.btn-delete-folder {
+  color: var(--apple-red);
+  border-color: rgba(255, 69, 58, 0.25);
+  background: rgba(255, 69, 58, 0.08);
+}
+
+.btn-delete-folder:hover {
+  background: rgba(255, 69, 58, 0.18);
+  border-color: var(--apple-red);
+  color: #ff6b62;
+}
+
+/* ==========================================================================
+   PIN BUTTONS & PINNED BADGES (TILES, ROWS, DETAIL PANEL)
+   ========================================================================== */
+
+/* Tile Pin Button */
+.repo-tile__pin-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--apple-text-quaternary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  z-index: 5;
+}
+
+.repo-tile__pin-btn svg {
+  width: 12px;
+  height: 12px;
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.repo-tile:hover .repo-tile__pin-btn {
+  color: var(--apple-text-tertiary);
+}
+
+.repo-tile__pin-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--apple-text-primary);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: scale(1.08);
+}
+
+.repo-tile__pin-btn.is-pinned {
+  color: #ffd60a;
+  background: rgba(255, 214, 10, 0.16);
+  border-color: rgba(255, 214, 10, 0.45);
+  box-shadow: 0 0 10px rgba(255, 214, 10, 0.25);
+  opacity: 1;
+}
+
+.repo-tile--pinned {
+  border-color: rgba(255, 214, 10, 0.35) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 16px rgba(255, 214, 10, 0.06);
+}
+
+/* Row Pin Button */
+.repo-row__pin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--apple-text-quaternary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.repo-row__pin-btn svg {
+  width: 12px;
+  height: 12px;
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.repo-row:hover .repo-row__pin-btn {
+  color: var(--apple-text-tertiary);
+}
+
+.repo-row__pin-btn:hover {
+  color: var(--apple-text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.repo-row__pin-btn.is-pinned {
+  color: #ffd60a;
+  opacity: 1;
+}
+
+.repo-row--pinned {
+  background: rgba(255, 214, 10, 0.035);
+}
+
+.repo-row--pinned:hover {
+  background: rgba(255, 214, 10, 0.065);
+}
+
+/* Detail Panel Pin Button */
+.detail-btn--pin.is-pinned {
+  color: #ffd60a;
+  background: rgba(255, 214, 10, 0.14);
+  border-color: rgba(255, 214, 10, 0.45);
+}
+
+.detail-btn--pin.is-pinned:hover {
+  background: rgba(255, 214, 10, 0.22);
+}
+
+/* ==========================================================================
+   FOLDER PILLS IN TILES, ROWS & DETAIL PANEL
+   ========================================================================== */
+
+/* Tile Folder Pill */
+.repo-tile__folder-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--folder-color, #0071e3) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--folder-color, #0071e3) 35%, transparent);
+  color: var(--apple-text-primary);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-tile__folder-pill .folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Row Folder Pill */
+.repo-row__folder-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--folder-color, #0071e3) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--folder-color, #0071e3) 30%, transparent);
+  color: var(--apple-text-primary);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-row__folder-pill .folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Detail Panel Folder Card */
+.detail-card--folder {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--apple-border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.detail-card--folder .detail-card__title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--apple-text-tertiary);
+  margin-bottom: 8px;
+}
+
+.detail-folder-selector-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-folder-selector-wrap .controls-bar__select-wrap {
+  flex: 1;
+}
+
+.btn-remove-folder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--apple-border);
+  color: var(--apple-text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.btn-remove-folder:hover {
+  background: rgba(255, 69, 58, 0.14);
+  border-color: rgba(255, 69, 58, 0.4);
+  color: var(--apple-red);
+}
+
+/* ==========================================================================
+   LIST VIEW GROUP HEADERS
+   ========================================================================== */
+
+.repo-list-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--apple-border-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--apple-text-secondary);
+  letter-spacing: -0.01em;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  backdrop-filter: blur(16px);
+}
+
+.repo-list-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--apple-text-tertiary);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-variant-numeric: tabular-nums;
+}
+

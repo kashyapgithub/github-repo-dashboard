@@ -8,10 +8,10 @@
 
 import { escapeHtml, timeAgo, formatNumber } from '../format.js';
 
-export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
+export function createRepoTile(repo, { onSelect, onTogglePin, initialAiEntry, initialFolder } = {}) {
   const tile = document.createElement('div');
   const themeClass = repo.isPrivate ? 'repo-tile--private' : 'repo-tile--public';
-  tile.className = `repo-tile ${themeClass}`;
+  tile.className = `repo-tile ${themeClass} ${repo.isPinned ? 'repo-tile--pinned' : ''}`;
   tile.dataset.repoId = repo.id;
   tile.dataset.kind = repo.isFork ? (repo.looksUntouched ? 'untouched' : 'fork') : 'original';
   tile.tabIndex = 0;
@@ -24,6 +24,16 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
         <span class="repo-tile__lang-name">${escapeHtml(repo.language)}</span>
       </span>`
     : '';
+
+  const folderDisplay = initialFolder
+    ? `<span class="repo-tile__folder-pill" data-role="folder-pill" style="--folder-color: ${initialFolder.color || '#0071e3'}" title="Folder: ${escapeHtml(initialFolder.name)}">
+        <span class="folder-dot" style="background-color: ${initialFolder.color || '#0071e3'}"></span>
+        <span class="folder-name">${escapeHtml(initialFolder.name)}</span>
+      </span>`
+    : `<span class="repo-tile__folder-pill" data-role="folder-pill" hidden>
+        <span class="folder-dot"></span>
+        <span class="folder-name"></span>
+      </span>`;
 
   let kindBadge = '';
   if (repo.isFork) {
@@ -58,7 +68,18 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
         ${kindBadge}
       </div>
       <div class="repo-tile__header-right">
+        ${folderDisplay}
         ${langDisplay}
+        <button
+          type="button"
+          class="repo-tile__pin-btn ${repo.isPinned ? 'is-pinned' : ''}"
+          title="${repo.isPinned ? 'Unpin repository' : 'Pin repository'}"
+          aria-label="Pin repository"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1 0 .707c-.48.48-1.072.588-1.503.588-.177 0-.335-.018-.46-.039l-2.46 2.46c.02.125.039.283.039.46 0 .43-.108 1.022-.588 1.503a.5.5 0 0 1-.707 0L7.843 9.927 4.136 13.634a.5.5 0 0 1-.707 0l-.354-.354a.5.5 0 0 1 0-.707l3.707-3.707-1.57-1.57a.5.5 0 0 1 0-.707c.48-.48 1.072-.588 1.503-.588.177 0 .335.018.46.039l2.46-2.46c-.02-.125-.039-.283-.039-.46 0-.43.108-1.022.588-1.503a.5.5 0 0 1 .354-.146Z"/>
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -152,7 +173,43 @@ export function createRepoTile(repo, { onSelect, initialAiEntry } = {}) {
     });
   }
 
+  // Pin button handler
+  const pinBtn = tile.querySelector('.repo-tile__pin-btn');
+  if (pinBtn) {
+    pinBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (onTogglePin) onTogglePin(repo.id);
+    });
+  }
+
   // Public methods to update in place
+  tile.updatePin = (isPinned) => {
+    repo.isPinned = isPinned;
+    tile.classList.toggle('repo-tile--pinned', isPinned);
+    if (pinBtn) {
+      pinBtn.classList.toggle('is-pinned', isPinned);
+      pinBtn.title = isPinned ? 'Unpin repository' : 'Pin repository';
+    }
+  };
+
+  tile.updateFolder = (folder) => {
+    repo.folderId = folder ? folder.id : null;
+    const folderPill = tile.querySelector('[data-role="folder-pill"]');
+    if (folderPill) {
+      if (folder) {
+        folderPill.style.setProperty('--folder-color', folder.color || '#0071e3');
+        const dotEl = folderPill.querySelector('.folder-dot');
+        const nameEl = folderPill.querySelector('.folder-name');
+        if (dotEl) dotEl.style.backgroundColor = folder.color || '#0071e3';
+        if (nameEl) nameEl.textContent = folder.name;
+        folderPill.title = `Folder: ${folder.name}`;
+        folderPill.hidden = false;
+      } else {
+        folderPill.hidden = true;
+      }
+    }
+  };
+
   tile.updateStars = () => {
     const starContainer = tile.querySelector('.repo-tile__pill--stars');
     if (starContainer) {

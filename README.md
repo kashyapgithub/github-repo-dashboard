@@ -44,7 +44,14 @@ website.
 - Descriptions are generated once per repo and cached against its last-pushed timestamp, so reopening the dashboard doesn't regenerate anything unless the repo actually changed.
 - At most 3 AI requests run at once, to stay under free-tier rate limits.
 - **Untouched** on a fork means it's never been pushed to since you forked it (a free signal — no extra API call, and not the same as an exact commits-ahead count).
-- Keyboard: `←`/`↑`/`↓`/`→` to navigate across grid or list, `Enter` to open on GitHub, `I` to toggle inspector, `/` to search, `Esc` to close.
+- **Pin Repositories & Folders for Maximum Efficiency**:
+  - **Pin Repositories (`P` key)**: Pin essential repositories with 1 click on any tile, row, or detail panel. Pinned repos float to the top of any sort, display a gold pin badge and halo, and are accessible via the dedicated `📌 Pinned` pill.
+  - **Custom Folders with Emoji & Color**: Create custom folders (e.g. `💼 Work Projects`, `🤖 AI Tools`, `📦 Client Apps`) with custom names, emoji icons, and accent colors.
+  - **Store & Manage Repos in Folders**: Assign or remove repositories into folders directly from the Detail Inspector or tile cards.
+  - **Horizontal Folder Navigation Bar**: Instant 1-click filtering between `All Repos`, `📌 Pinned`, and your custom folders with live repository counters.
+  - **Group by Folder**: Visual section grouping in both Floor Tiles and List views separating custom folders, unfiled pinned repos, and unfiled repositories.
+- **Recently Edited Repos & Live Commits Panel**: Quick-filter your dashboard to recently edited repositories, and pop up an interactive macOS Sheet (`C` key) displaying the latest commits across repositories. Each commit clearly shows the repository it belongs to (with language indicator and one-click repo isolation), author avatar, relative timestamp, short SHA link, verified badge, and live commit search.
+- Keyboard: `←`/`↑`/`↓`/`→` to navigate across grid or list, `Enter` to open on GitHub, `P` to pin/unpin, `I` to toggle inspector, `C` to view recent commits, `/` to search, `Esc` to close.
 
 ## Project layout
 
@@ -52,15 +59,17 @@ website.
 manifest.json                            Extension config (MV3)
 background/background.js                 Opens the dashboard window
 overlay/overlay.html / .css / .js        Dashboard page + entry point
-overlay/modules/storage.js               Settings + UI prefs + description cache
+overlay/modules/storage.js               Settings + UI prefs + pin/folder storage + cache
 overlay/modules/github-api.js            GitHub REST API calls
 overlay/modules/concurrency.js           Throttles AI requests
 overlay/modules/format.js                String/date helpers
 overlay/modules/ai/*.js                  One file per AI provider
 overlay/modules/render/statsBar.js       Public/private/fork counts
+overlay/modules/render/folderBar.js      Horizontal folder nav bar + folder modal
 overlay/modules/render/repoRow.js        One row in the ledger list
 overlay/modules/render/repoTile.js       One bento card in the floor tiles grid
-overlay/modules/render/detailPanel.js    Selected repo's full details
+overlay/modules/render/detailPanel.js    Selected repo's full details + folder selector
+overlay/modules/render/commitsPanel.js   Recent commits popup sheet
 overlay/modules/render/controls.js       Search / sort / group / view switcher
 overlay/modules/render/settingsPanel.js  Settings modal
 ```

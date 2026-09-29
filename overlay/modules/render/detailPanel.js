@@ -6,7 +6,22 @@
 import { escapeHtml, timeAgo, formatDate, formatNumber, getLanguageColor } from '../format.js';
 import { fetchRepoParent } from '../github-api.js';
 
-export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenSettings, githubToken, onParentLoaded } = {}) {
+export function renderDetailPanel(
+  container,
+  repo,
+  info,
+  {
+    onRegenerate,
+    onOpenSettings,
+    onViewCommits,
+    onTogglePin,
+    onAssignFolder,
+    onCreateFolder,
+    folders = [],
+    githubToken,
+    onParentLoaded,
+  } = {}
+) {
   if (!repo) {
     container.innerHTML = `
       <div class="detail-panel__empty">
@@ -25,6 +40,7 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
   const kindLabel = repo.isFork ? (repo.looksUntouched ? 'Untouched fork' : 'Fork') : 'Original';
   const kindBadgeClass = repo.isFork ? (repo.looksUntouched ? 'badge--untouched' : 'badge--fork') : 'badge--original';
   const langColor = repo.language ? getLanguageColor(repo.language) : null;
+  const currentFolder = folders.find((f) => f.id === repo.folderId);
 
   container.innerHTML = `
     <div class="detail-panel__header">
@@ -43,6 +59,8 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
         </span>
         <span class="badge ${kindBadgeClass}">${kindLabel}</span>
         ${repo.archived ? '<span class="badge badge--archived">Archived</span>' : ''}
+        ${repo.isPinned ? '<span class="badge badge--pinned">📌 Pinned</span>' : ''}
+        ${currentFolder ? `<span class="badge badge--folder" style="--folder-color: ${currentFolder.color || '#0071e3'}"><span class="folder-dot" style="background-color: ${currentFolder.color || '#0071e3'}"></span> ${escapeHtml(currentFolder.name)}</span>` : ''}
         ${repo.owner ? `<span class="detail-panel__owner-badge">by <strong>${escapeHtml(repo.owner)}</strong></span>` : ''}
       </div>
 
@@ -69,6 +87,25 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
           </svg>
           <span>Open on GitHub</span>
         </a>
+
+        <button
+          type="button"
+          class="detail-btn detail-btn--pin ${repo.isPinned ? 'detail-btn--pinned' : ''}"
+          id="btn-detail-pin"
+          title="${repo.isPinned ? 'Unpin repository' : 'Pin repository'}"
+        >
+          <svg class="detail-btn__icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1 0 .707c-.48.48-1.072.588-1.503.588-.177 0-.335-.018-.46-.039l-2.46 2.46c.02.125.039.283.039.46 0 .43-.108 1.022-.588 1.503a.5.5 0 0 1-.707 0L7.843 9.927 4.136 13.634a.5.5 0 0 1-.707 0l-.354-.354a.5.5 0 0 1 0-.707l3.707-3.707-1.57-1.57a.5.5 0 0 1 0-.707c.48-.48 1.072-.588 1.503-.588.177 0 .335.018.46.039l2.46-2.46c-.02-.125-.039-.283-.039-.46 0-.43.108-1.022.588-1.503a.5.5 0 0 1 .354-.146Z"/>
+          </svg>
+          <span class="detail-btn-pin-label">${repo.isPinned ? 'Pinned' : 'Pin Repo'}</span>
+        </button>
+
+        <button type="button" class="detail-btn detail-btn--secondary" id="btn-view-repo-commits" title="View recent commits for this repository">
+          <svg class="detail-btn__icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11.93 8.5a4.002 4.002 0 0 1-7.86 0H.75a.75.75 0 0 1 0-1.5h3.32a4.002 4.002 0 0 1 7.86 0h3.32a.75.75 0 0 1 0 1.5h-3.32Zm-1.43-.75a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z"/>
+          </svg>
+          <span>View Commits</span>
+        </button>
 
         <button type="button" class="detail-btn detail-btn--secondary" id="btn-copy-clone" data-url="${escapeHtml(repo.cloneUrl || repo.url + '.git')}">
           <svg class="detail-btn__icon" viewBox="0 0 16 16" fill="currentColor">
@@ -184,6 +221,45 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
       </div>
     </div>
 
+    <!-- Folder Organization Card -->
+    <div class="detail-card detail-card--folder">
+      <div class="detail-card__header">
+        <div class="detail-card__title">
+          <svg class="icon-folder" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z"/>
+          </svg>
+          <span>Folder</span>
+        </div>
+      </div>
+      <div class="detail-card__body">
+        <div class="detail-folder-selector-wrap">
+          <div class="select-wrap detail-select-wrap">
+            <select id="detail-folder-select" aria-label="Select folder for this repository">
+              <option value="" ${!repo.folderId ? 'selected' : ''}>No Folder (Unfiled)</option>
+              ${folders
+                .map(
+                  (f) => `
+                    <option value="${f.id}" ${repo.folderId === f.id ? 'selected' : ''}>
+                      ${escapeHtml(f.name)}
+                    </option>
+                  `
+                )
+                .join('')}
+              <option value="__new__">＋ Create New Folder…</option>
+            </select>
+            <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
+            </svg>
+          </div>
+          ${
+            repo.folderId
+              ? `<button type="button" class="btn-remove-folder" id="btn-remove-folder" title="Remove repository from folder">✕</button>`
+              : ''
+          }
+        </div>
+      </div>
+    </div>
+
     <!-- Quick Navigation Links -->
     <div class="detail-quick-links">
       <span class="detail-quick-links__title">Quick Links:</span>
@@ -196,6 +272,36 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
       <a href="${repo.url}/releases" target="_blank" rel="noopener">Releases</a>
     </div>
   `;
+
+  // Wire up Pin button
+  const pinBtn = container.querySelector('#btn-detail-pin');
+  if (pinBtn && onTogglePin) {
+    pinBtn.addEventListener('click', () => {
+      onTogglePin(repo.id);
+    });
+  }
+
+  // Wire up Folder Select
+  const folderSelect = container.querySelector('#detail-folder-select');
+  if (folderSelect) {
+    folderSelect.addEventListener('change', () => {
+      const val = folderSelect.value;
+      if (val === '__new__') {
+        folderSelect.value = repo.folderId || '';
+        if (onCreateFolder) onCreateFolder();
+      } else {
+        if (onAssignFolder) onAssignFolder(repo.id, val || null);
+      }
+    });
+  }
+
+  // Wire up Remove Folder button
+  const removeFolderBtn = container.querySelector('#btn-remove-folder');
+  if (removeFolderBtn && onAssignFolder) {
+    removeFolderBtn.addEventListener('click', () => {
+      onAssignFolder(repo.id, null);
+    });
+  }
 
   // Wire up Copy Clone URL button
   const copyBtn = container.querySelector('#btn-copy-clone');
@@ -246,6 +352,14 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
     settingsBtn.addEventListener('click', onOpenSettings);
   }
 
+  // Wire up View Commits button
+  const viewCommitsBtn = container.querySelector('#btn-view-repo-commits');
+  if (viewCommitsBtn && onViewCommits) {
+    viewCommitsBtn.addEventListener('click', () => {
+      onViewCommits(repo);
+    });
+  }
+
   container.dataset.activeRepoId = String(repo.id);
 
   // If repo is a fork and parent is not yet loaded, load on-demand
@@ -256,7 +370,17 @@ export function renderDetailPanel(container, repo, info, { onRegenerate, onOpenS
         repo.parentStars = parent.stars;
         if (onParentLoaded) onParentLoaded(repo);
         if (container.dataset.activeRepoId === String(repo.id)) {
-          renderDetailPanel(container, repo, info, { onRegenerate, onOpenSettings, githubToken, onParentLoaded });
+          renderDetailPanel(container, repo, info, {
+            onRegenerate,
+            onOpenSettings,
+            onViewCommits,
+            onTogglePin,
+            onAssignFolder,
+            onCreateFolder,
+            folders,
+            githubToken,
+            onParentLoaded,
+          });
         }
       }
     });

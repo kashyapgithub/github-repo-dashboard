@@ -236,3 +236,79 @@ export async function fetchRepoParent(owner, repoName, token) {
     return null;
   }
 }
+
+/**
+ * Fetches commits for a single repository.
+ */
+export async function fetchRepoCommits(owner, repoName, token, { perPage = 10 } = {}) {
+  try {
+    const rawCommits = await githubRequest(`/repos/${owner}/${repoName}/commits?per_page=${perPage}`, token);
+    if (!Array.isArray(rawCommits)) return [];
+    return rawCommits.map((item) => normalizeCommit(item, { owner, repoName }));
+  } catch (err) {
+    console.warn(`Failed to fetch commits for ${owner}/${repoName}:`, err);
+    return [];
+  }
+}
+
+/**
+ * Fetches recent commits across the top most recently edited repositories.
+ */
+export async function fetchRecentCommitsAcrossRepos(repos, token, { maxRepos = 8, perRepo = 6 } = {}) {
+  if (!repos?.length || !token) return [];
+
+  // Sort repos by pushed_at or updatedAt descending to get most recently edited repos
+  const sortedRepos = [...repos].sort((a, b) => {
+    const dateA = new Date(a.pushed_at || a.updatedAt).getTime();
+    const dateB = new Date(b.pushed_at || b.updatedAt).getTime();
+    return dateB - dateA;
+  });
+
+  const targetRepos = sortedRepos.slice(0, maxRepos);
+  const results = await Promise.allSettled(
+    targetRepos.map(async (repo) => {
+      const commits = await fetchRepoCommits(repo.owner, repo.name, token, { perPage: perRepo });
+      return commits.map((c) => ({
+        ...c,
+        repoId: repo.id,
+        repoName: repo.name,
+        repoFullName: repo.fullName,
+        repoUrl: repo.url,
+        repoLanguage: repo.language,
+        isPrivate: repo.isPrivate,
+      }));
+    })
+  );
+
+  const allCommits = [];
+  for (const res of results) {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      allCommits.push(...res.value);
+    }
+  }
+
+  // Sort chronologically (newest first)
+  return allCommits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+function normalizeCommit(raw, repoInfo) {
+  const commit = raw.commit || {};
+  const message = commit.message || '';
+  const [headline, ...rest] = message.split('\n');
+  const body = rest.join('\n').trim();
+
+  return {
+    sha: raw.sha,
+    shortSha: raw.sha ? raw.sha.slice(0, 7) : '',
+    url: raw.html_url || (raw.url ? raw.url.replace('api.github.com/repos', 'github.com').replace('/commits/', '/commit/') : '#'),
+    message,
+    headline: headline || 'No commit message',
+    body,
+    authorName: commit.author?.name || raw.author?.login || 'Unknown',
+    authorLogin: raw.author?.login || '',
+    authorAvatar: raw.author?.avatar_url || '',
+    date: commit.author?.date || commit.committer?.date || '',
+    verified: Boolean(commit.verification?.verified),
+  };
+}
+

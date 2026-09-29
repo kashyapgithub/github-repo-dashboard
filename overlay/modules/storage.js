@@ -51,13 +51,14 @@ export async function clearDescriptionCache() {
 
 const UI_PREFS_KEY = 'ui_prefs';
 
-/** Returns saved UI preferences (viewMode, groupBy, inspectorOpen) */
+/** Returns saved UI preferences (viewMode, groupBy, inspectorOpen, activeFolderId) */
 export async function getUiPreferences() {
   const { [UI_PREFS_KEY]: prefs } = await chrome.storage.local.get(UI_PREFS_KEY);
   return {
     viewMode: prefs?.viewMode ?? 'tiles', // 'tiles' | 'list'
-    groupBy: prefs?.groupBy ?? 'none',   // 'none' | 'language' | 'type' | 'year'
+    groupBy: prefs?.groupBy ?? 'none',   // 'none' | 'folder' | 'language' | 'type' | 'year'
     inspectorOpen: prefs?.inspectorOpen ?? true,
+    activeFolderId: prefs?.activeFolderId ?? 'all', // 'all' | 'pinned' | folderId
   };
 }
 
@@ -67,3 +68,107 @@ export async function saveUiPreferences(newPrefs) {
   await chrome.storage.local.set({ [UI_PREFS_KEY]: merged });
   return merged;
 }
+
+const PINNED_REPOS_KEY = 'pinned_repos';
+const FOLDERS_KEY = 'custom_folders';
+const REPO_FOLDERS_KEY = 'repo_folders';
+
+/** Returns array of pinned repo IDs (numbers) */
+export async function getPinnedRepoIds() {
+  const { [PINNED_REPOS_KEY]: ids } = await chrome.storage.local.get(PINNED_REPOS_KEY);
+  return Array.isArray(ids) ? ids : [];
+}
+
+export async function setPinnedRepoIds(ids) {
+  await chrome.storage.local.set({ [PINNED_REPOS_KEY]: ids });
+}
+
+export async function togglePinnedRepo(repoId) {
+  const current = await getPinnedRepoIds();
+  const index = current.indexOf(repoId);
+  let isPinned = false;
+  let updated;
+  if (index >= 0) {
+    updated = current.filter((id) => id !== repoId);
+    isPinned = false;
+  } else {
+    updated = [...current, repoId];
+    isPinned = true;
+  }
+  await setPinnedRepoIds(updated);
+  return isPinned;
+}
+
+/** Returns array of folders: [ { id, name, icon, color, createdAt } ] */
+export async function getFolders() {
+  const { [FOLDERS_KEY]: folders } = await chrome.storage.local.get(FOLDERS_KEY);
+  return Array.isArray(folders) ? folders : [];
+}
+
+export async function saveFolders(folders) {
+  await chrome.storage.local.set({ [FOLDERS_KEY]: folders });
+}
+
+export async function createFolder({ name, color = '#0071e3' }) {
+  const folders = await getFolders();
+  const newFolder = {
+    id: 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    name: name.trim(),
+    color: color || '#0071e3',
+    createdAt: new Date().toISOString(),
+  };
+  folders.push(newFolder);
+  await saveFolders(folders);
+  return newFolder;
+}
+
+export async function updateFolder(folderId, { name, color }) {
+  const folders = await getFolders();
+  const folder = folders.find((f) => f.id === folderId);
+  if (folder) {
+    if (name !== undefined) folder.name = name.trim();
+    if (color !== undefined) folder.color = color;
+    await saveFolders(folders);
+  }
+  return folder;
+}
+
+export async function deleteFolder(folderId) {
+  const folders = await getFolders();
+  const updated = folders.filter((f) => f.id !== folderId);
+  await saveFolders(updated);
+
+  // Unassign any repos in this folder
+  const repoFolders = await getRepoFolders();
+  let changed = false;
+  for (const [repoId, fId] of Object.entries(repoFolders)) {
+    if (fId === folderId) {
+      delete repoFolders[repoId];
+      changed = true;
+    }
+  }
+  if (changed) {
+    await chrome.storage.local.set({ [REPO_FOLDERS_KEY]: repoFolders });
+  }
+}
+
+/** Returns object mapping repoId -> folderId: { [repoId]: folderId } */
+export async function getRepoFolders() {
+  const { [REPO_FOLDERS_KEY]: map } = await chrome.storage.local.get(REPO_FOLDERS_KEY);
+  return map && typeof map === 'object' ? map : {};
+}
+
+export async function setRepoFolder(repoId, folderId) {
+  const repoFolders = await getRepoFolders();
+  if (folderId) {
+    repoFolders[repoId] = folderId;
+  } else {
+    delete repoFolders[repoId];
+  }
+  await chrome.storage.local.set({ [REPO_FOLDERS_KEY]: repoFolders });
+}
+
+export async function removeRepoFromFolder(repoId) {
+  await setRepoFolder(repoId, null);
+}
+

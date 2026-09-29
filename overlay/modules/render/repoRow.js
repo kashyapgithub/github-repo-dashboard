@@ -6,10 +6,10 @@
 
 import { escapeHtml, timeAgo, formatNumber, getLanguageColor } from '../format.js';
 
-export function createRepoRow(repo, { onSelect }) {
+export function createRepoRow(repo, { onSelect, onTogglePin, initialFolder } = {}) {
   const row = document.createElement('button');
   row.type = 'button';
-  row.className = 'repo-row';
+  row.className = `repo-row ${repo.isPinned ? 'repo-row--pinned' : ''}`;
   row.dataset.repoId = repo.id;
   row.dataset.kind = repo.isFork ? (repo.looksUntouched ? 'untouched' : 'fork') : 'original';
 
@@ -17,6 +17,16 @@ export function createRepoRow(repo, { onSelect }) {
   const langDisplay = repo.language
     ? `<span class="repo-row__lang-dot" style="background-color: ${langColor}"></span><span class="repo-row__lang-name">${escapeHtml(repo.language)}</span>`
     : `<span class="repo-row__lang-empty">—</span>`;
+
+  const folderDisplay = initialFolder
+    ? `<span class="badge repo-row__folder-pill" data-role="folder-pill" style="--folder-color: ${initialFolder.color || '#0071e3'}" title="Folder: ${escapeHtml(initialFolder.name)}">
+        <span class="folder-dot" style="background-color: ${initialFolder.color || '#0071e3'}"></span>
+        <span class="folder-name">${escapeHtml(initialFolder.name)}</span>
+      </span>`
+    : `<span class="badge repo-row__folder-pill" data-role="folder-pill" hidden>
+        <span class="folder-dot"></span>
+        <span class="folder-name"></span>
+      </span>`;
 
   let kindBadge = '';
   if (repo.isFork) {
@@ -34,6 +44,16 @@ export function createRepoRow(repo, { onSelect }) {
   row.innerHTML = `
     <span class="repo-row__status" data-role="status" data-status="no-key" title="AI summary: not configured" aria-label="AI summary status"></span>
     <span class="repo-row__name-cell">
+      <button
+        type="button"
+        class="repo-row__pin-btn ${repo.isPinned ? 'is-pinned' : ''}"
+        title="${repo.isPinned ? 'Unpin repository' : 'Pin repository'}"
+        aria-label="Pin repository"
+      >
+        <svg viewBox="0 0 16 16" fill="currentColor">
+          <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1 0 .707c-.48.48-1.072.588-1.503.588-.177 0-.335-.018-.46-.039l-2.46 2.46c.02.125.039.283.039.46 0 .43-.108 1.022-.588 1.503a.5.5 0 0 1-.707 0L7.843 9.927 4.136 13.634a.5.5 0 0 1-.707 0l-.354-.354a.5.5 0 0 1 0-.707l3.707-3.707-1.57-1.57a.5.5 0 0 1 0-.707c.48-.48 1.072-.588 1.503-.588.177 0 .335.018.46.039l2.46-2.46c-.02-.125-.039-.283-.039-.46 0-.43.108-1.022.588-1.503a.5.5 0 0 1 .354-.146Z"/>
+        </svg>
+      </button>
       <span class="repo-row__name">${escapeHtml(repo.name)}</span>
       ${repo.description ? `<span class="repo-row__snippet">${escapeHtml(repo.description)}</span>` : ''}
     </span>
@@ -41,10 +61,44 @@ export function createRepoRow(repo, { onSelect }) {
     ${renderStarsHtml(repo)}
     <span class="repo-row__updated" title="Updated ${new Date(repo.updatedAt).toLocaleString()}">${timeAgo(repo.updatedAt)}</span>
     <span class="repo-row__badges">
+      ${folderDisplay}
       ${visBadge}
       ${kindBadge}
     </span>
   `;
+
+  const pinBtn = row.querySelector('.repo-row__pin-btn');
+  pinBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (onTogglePin) onTogglePin(repo.id);
+  });
+
+  row.updatePin = (isPinned) => {
+    repo.isPinned = isPinned;
+    row.classList.toggle('repo-row--pinned', isPinned);
+    if (pinBtn) {
+      pinBtn.classList.toggle('is-pinned', isPinned);
+      pinBtn.title = isPinned ? 'Unpin repository' : 'Pin repository';
+    }
+  };
+
+  row.updateFolder = (folder) => {
+    repo.folderId = folder ? folder.id : null;
+    const folderPill = row.querySelector('[data-role="folder-pill"]');
+    if (folderPill) {
+      if (folder) {
+        folderPill.style.setProperty('--folder-color', folder.color || '#0071e3');
+        const dotEl = folderPill.querySelector('.folder-dot');
+        const nameEl = folderPill.querySelector('.folder-name');
+        if (dotEl) dotEl.style.backgroundColor = folder.color || '#0071e3';
+        if (nameEl) nameEl.textContent = folder.name;
+        folderPill.title = `Folder: ${folder.name}`;
+        folderPill.hidden = false;
+      } else {
+        folderPill.hidden = true;
+      }
+    }
+  };
 
   row.updateStars = () => {
     const starContainer = row.querySelector('.repo-row__stars');
