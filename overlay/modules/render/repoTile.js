@@ -8,7 +8,7 @@
 
 import { escapeHtml, timeAgo, formatNumber } from '../format.js';
 
-export function createRepoTile(repo, { onSelect, onTogglePin, initialAiEntry, initialFolder } = {}) {
+export function createRepoTile(repo, { onSelect, onTogglePin, onToggleSelect, initialAiEntry, initialFolder } = {}) {
   const tile = document.createElement('div');
   const themeClass = repo.isPrivate ? 'repo-tile--private' : 'repo-tile--public';
   tile.className = `repo-tile ${themeClass} ${repo.isPinned ? 'repo-tile--pinned' : ''}`;
@@ -63,6 +63,9 @@ export function createRepoTile(repo, { onSelect, onTogglePin, initialAiEntry, in
   tile.innerHTML = `
     <div class="repo-tile__header">
       <div class="repo-tile__header-left">
+        <label class="repo-tile__select-label" title="Select repository">
+          <input type="checkbox" class="repo-checkbox" aria-label="Select ${escapeHtml(repo.name)}" />
+        </label>
         <span class="repo-tile__status" data-role="status" data-status="${initialStatus}" title="${getStatusTitle(initialStatus)}" aria-label="AI Status"></span>
         ${visBadge}
         ${kindBadge}
@@ -125,6 +128,16 @@ export function createRepoTile(repo, { onSelect, onTogglePin, initialAiEntry, in
       </div>
 
       <div class="repo-tile__actions">
+        <a href="vscode://vscode.git/clone?url=${encodeURIComponent(repo.cloneUrl || repo.url + '.git')}" class="repo-tile__action-btn btn-tile-vscode" title="Open in VS Code" aria-label="Open in VS Code" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M14.5 2.5a.5.5 0 0 0-.25-.433l-3-1.732a.5.5 0 0 0-.583.076L6.5 4.3 3.65 1.84a.5.5 0 0 0-.64.01L1.24 3.32a.5.5 0 0 0-.09.68L3.8 7.5 1.15 11.04a.5.5 0 0 0 .09.68l1.77 1.47a.5.5 0 0 0 .64.01L6.5 10.7l4.167 3.889a.5.5 0 0 0 .583.076l3-1.732a.5.5 0 0 0 .25-.433V2.5ZM11 4.232l2-1.155v9.846l-2-1.155V4.232Z"/>
+          </svg>
+        </a>
+        <a href="https://github.dev/${escapeHtml(repo.fullName)}" class="repo-tile__action-btn btn-tile-githubdev" title="Open in github.dev" aria-label="Open in github.dev" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4 1.75C4 .784 4.784 0 5.75 0h5.586a1.75 1.75 0 0 1 1.237.513l2.914 2.914c.328.328.513.774.513 1.237v8.586A1.75 1.75 0 0 1 14.25 15h-8.5A1.75 1.75 0 0 1 4 13.25V1.75Zm1.75-.25a.25.25 0 0 0-.25.25v11.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25V5h-2.75A1.75 1.75 0 0 1 10 3.25V1.5H5.75Zm5.75 1.75v-.69L13.69 5H11.75a.25.25 0 0 1-.25-.25ZM2.25 3A1.75 1.75 0 0 0 .5 4.75v9.5C.5 15.216 1.284 16 2.25 16h8.5A1.75 1.75 0 0 0 12.5 14.25v-.5a.75.75 0 0 0-1.5 0v.5a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25v-9.5a.25.25 0 0 1 .25-.25h.5a.75.75 0 0 0 0-1.5h-.5Z"/>
+          </svg>
+        </a>
         <button type="button" class="repo-tile__action-btn btn-tile-copy" title="Copy clone URL" aria-label="Copy clone URL" data-clone="${escapeHtml(repo.cloneUrl || repo.url + '.git')}">
           <svg viewBox="0 0 16 16" fill="currentColor">
             <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/>
@@ -135,9 +148,37 @@ export function createRepoTile(repo, { onSelect, onTogglePin, initialAiEntry, in
     </div>
   `;
 
+  const checkbox = tile.querySelector('.repo-checkbox');
+  checkbox?.addEventListener('change', (e) => {
+    e.stopPropagation();
+    if (onToggleSelect) onToggleSelect(repo.id, checkbox.checked);
+  });
+
+  tile.updateBatchSelected = (isSelected) => {
+    tile.classList.toggle('is-batch-selected', isSelected);
+    if (checkbox) checkbox.checked = isSelected;
+  };
+
   // Selection handler
   tile.addEventListener('click', (e) => {
-    if (e.target.closest('.btn-tile-copy') || e.target.closest('.repo-tile__ext-link')) return;
+    if (
+      e.target.closest('.btn-tile-copy') ||
+      e.target.closest('.btn-tile-vscode') ||
+      e.target.closest('.btn-tile-githubdev') ||
+      e.target.closest('.repo-tile__ext-link') ||
+      e.target.closest('.repo-tile__pin-btn') ||
+      e.target.closest('.repo-tile__select-label') ||
+      e.target.closest('.repo-checkbox')
+    ) {
+      return;
+    }
+    if (tile.closest('.is-select-mode')) {
+      if (checkbox) {
+        checkbox.checked = !checkbox.checked;
+        if (onToggleSelect) onToggleSelect(repo.id, checkbox.checked);
+      }
+      return;
+    }
     if (onSelect) onSelect(repo.id);
   });
 
@@ -218,6 +259,24 @@ export function createRepoTile(repo, { onSelect, onTogglePin, initialAiEntry, in
     const forkCallout = tile.querySelector('.repo-tile__fork-chip');
     if (forkCallout) {
       forkCallout.outerHTML = renderForkCalloutHtml(repo);
+    }
+  };
+
+  tile.updateRepoData = (freshRepo) => {
+    repo.stars = freshRepo.stars;
+    repo.forksCount = freshRepo.forksCount;
+    repo.openIssues = freshRepo.openIssues;
+    repo.updatedAt = freshRepo.updatedAt;
+    repo.pushed_at = freshRepo.pushed_at;
+    repo.description = freshRepo.description;
+    repo.language = freshRepo.language;
+    repo.looksUntouched = freshRepo.looksUntouched;
+
+    tile.updateStars();
+    const updatedEl = tile.querySelector('.repo-tile__pill--time');
+    if (updatedEl) {
+      updatedEl.textContent = timeAgo(repo.updatedAt);
+      updatedEl.title = `Updated ${new Date(repo.updatedAt).toLocaleString()}`;
     }
   };
 

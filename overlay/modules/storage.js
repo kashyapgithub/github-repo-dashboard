@@ -16,11 +16,20 @@ const DESC_CACHE_PREFIX = 'desc_';
 /** Returns the saved settings, or sensible empty defaults on first run. */
 export async function getSettings() {
   const { [SETTINGS_KEY]: settings } = await chrome.storage.local.get(SETTINGS_KEY);
-  return settings ?? { githubToken: '', aiProvider: '', aiApiKeys: {} };
+  return {
+    githubToken: '',
+    aiProvider: '',
+    aiApiKeys: {},
+    autoRefreshInterval: 10, // 5 | 10 | 30 | 60 | 0 (0 = manual only)
+    ...(settings || {}),
+  };
 }
 
 export async function saveSettings(settings) {
-  await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+  const current = await getSettings();
+  const merged = { ...current, ...settings };
+  await chrome.storage.local.set({ [SETTINGS_KEY]: merged });
+  return merged;
 }
 
 /**
@@ -171,4 +180,174 @@ export async function setRepoFolder(repoId, folderId) {
 export async function removeRepoFromFolder(repoId) {
   await setRepoFolder(repoId, null);
 }
+
+const TRENDING_WHY_KEY = 'trending_why_cache';
+const TRENDING_WHY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export async function getCachedTrendingWhy(repoFullName) {
+  const { [TRENDING_WHY_KEY]: cache } = await chrome.storage.local.get(TRENDING_WHY_KEY);
+  if (!cache || typeof cache !== 'object') return null;
+  const entry = cache[repoFullName];
+  if (!entry || !entry.text) return null;
+  if (Date.now() - entry.timestamp > TRENDING_WHY_TTL_MS) return null;
+  return entry.text;
+}
+
+export async function setCachedTrendingWhy(repoFullName, text) {
+  const { [TRENDING_WHY_KEY]: cache = {} } = await chrome.storage.local.get(TRENDING_WHY_KEY);
+  cache[repoFullName] = {
+    text,
+    timestamp: Date.now(),
+  };
+  await chrome.storage.local.set({ [TRENDING_WHY_KEY]: cache });
+}
+
+const STARRED_TOPICS_KEY = 'starred_topics';
+const DEFAULT_STARRED_TOPICS = ['ai-agents', 'model-classifier', 'llm', 'rag', 'rust', 'devtools'];
+
+/** Returns array of topic slugs favorited/starred by user. */
+export async function getStarredTopics() {
+  const { [STARRED_TOPICS_KEY]: topics } = await chrome.storage.local.get(STARRED_TOPICS_KEY);
+  return Array.isArray(topics) ? topics : [...DEFAULT_STARRED_TOPICS];
+}
+
+export async function saveStarredTopics(topics) {
+  const clean = Array.isArray(topics) ? Array.from(new Set(topics.map((t) => t.toLowerCase().trim()))) : [];
+  await chrome.storage.local.set({ [STARRED_TOPICS_KEY]: clean });
+}
+
+export async function toggleStarredTopic(topicSlug) {
+  const normalized = topicSlug.toLowerCase().trim();
+  const topics = await getStarredTopics();
+  const set = new Set(topics);
+  let isStarred = false;
+  if (set.has(normalized)) {
+    set.delete(normalized);
+    isStarred = false;
+  } else {
+    set.add(normalized);
+    isStarred = true;
+  }
+  await saveStarredTopics(Array.from(set));
+  return isStarred;
+}
+
+const REPO_TAGS_KEY = 'repo_tags';
+const CUSTOM_TAGS_KEY = 'custom_tags';
+const DEFAULT_CUSTOM_TAGS = [
+  { id: 'tag-prototype', name: 'Prototype', color: '#ff9500' },
+  { id: 'tag-production', name: 'Production', color: '#34c759' },
+  { id: 'tag-client', name: 'Client', color: '#0071e3' },
+  { id: 'tag-template', name: 'Template', color: '#af52de' },
+  { id: 'tag-archive', name: 'Archive', color: '#8e8e93' },
+];
+
+/** Returns map of repoId -> array of tag IDs */
+export async function getRepoTags() {
+  const { [REPO_TAGS_KEY]: tags } = await chrome.storage.local.get(REPO_TAGS_KEY);
+  return tags && typeof tags === 'object' ? tags : {};
+}
+
+/** Updates tags array for a single repository */
+export async function setRepoTags(repoId, tagsList) {
+  const all = await getRepoTags();
+  if (!tagsList || tagsList.length === 0) {
+    delete all[repoId];
+  } else {
+    all[repoId] = Array.from(new Set(tagsList));
+  }
+  await chrome.storage.local.set({ [REPO_TAGS_KEY]: all });
+  return all;
+}
+
+/** Returns list of all defined custom tags */
+export async function getCustomTags() {
+  const { [CUSTOM_TAGS_KEY]: tags } = await chrome.storage.local.get(CUSTOM_TAGS_KEY);
+  return Array.isArray(tags) && tags.length > 0 ? tags : [...DEFAULT_CUSTOM_TAGS];
+}
+
+export async function saveCustomTags(tags) {
+  await chrome.storage.local.set({ [CUSTOM_TAGS_KEY]: tags });
+}
+
+export async function addCustomTag(name, color = '#0071e3') {
+  const tags = await getCustomTags();
+  const id = `tag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const newTag = { id, name: name.trim(), color };
+  tags.push(newTag);
+  await saveCustomTags(tags);
+  return newTag;
+}
+
+export async function deleteCustomTag(tagId) {
+  const tags = await getCustomTags();
+  const filtered = tags.filter((t) => t.id !== tagId);
+  await saveCustomTags(filtered);
+
+  const allRepoTags = await getRepoTags();
+  let changed = false;
+  for (const [rId, rTags] of Object.entries(allRepoTags)) {
+    if (Array.isArray(rTags) && rTags.includes(tagId)) {
+      allRepoTags[rId] = rTags.filter((t) => t !== tagId);
+      changed = true;
+    }
+  }
+  if (changed) {
+    await chrome.storage.local.set({ [REPO_TAGS_KEY]: allRepoTags });
+  }
+}
+
+/** Exports all custom organization data (folders, assignments, pins, topics, tags, prefs) */
+export async function exportConfiguration() {
+  const folders = await getFolders();
+  const repoFolders = await getRepoFolders();
+  const pinnedRepoIds = await getPinnedRepoIds();
+  const starredTopics = await getStarredTopics();
+  const repoTags = await getRepoTags();
+  const customTags = await getCustomTags();
+  const uiPrefs = await getUiPreferences();
+
+  return {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    folders,
+    repoFolders,
+    pinnedRepoIds,
+    starredTopics,
+    repoTags,
+    customTags,
+    uiPrefs,
+  };
+}
+
+/** Restores configuration from imported JSON object */
+export async function importConfiguration(imported) {
+  if (!imported || typeof imported !== 'object') {
+    throw new Error('Invalid configuration file format');
+  }
+
+  if (Array.isArray(imported.folders)) {
+    await saveFolders(imported.folders);
+  }
+  if (imported.repoFolders && typeof imported.repoFolders === 'object') {
+    await chrome.storage.local.set({ [REPO_FOLDERS_KEY]: imported.repoFolders });
+  }
+  if (Array.isArray(imported.pinnedRepoIds)) {
+    await setPinnedRepoIds(imported.pinnedRepoIds);
+  }
+  if (Array.isArray(imported.starredTopics)) {
+    await saveStarredTopics(imported.starredTopics);
+  }
+  if (imported.repoTags && typeof imported.repoTags === 'object') {
+    await chrome.storage.local.set({ [REPO_TAGS_KEY]: imported.repoTags });
+  }
+  if (Array.isArray(imported.customTags)) {
+    await saveCustomTags(imported.customTags);
+  }
+  if (imported.uiPrefs && typeof imported.uiPrefs === 'object') {
+    await saveUiPreferences(imported.uiPrefs);
+  }
+  return true;
+}
+
 

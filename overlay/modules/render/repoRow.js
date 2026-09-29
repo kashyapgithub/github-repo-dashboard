@@ -6,7 +6,7 @@
 
 import { escapeHtml, timeAgo, formatNumber, getLanguageColor } from '../format.js';
 
-export function createRepoRow(repo, { onSelect, onTogglePin, initialFolder } = {}) {
+export function createRepoRow(repo, { onSelect, onTogglePin, onToggleSelect, initialFolder } = {}) {
   const row = document.createElement('button');
   row.type = 'button';
   row.className = `repo-row ${repo.isPinned ? 'repo-row--pinned' : ''}`;
@@ -42,6 +42,9 @@ export function createRepoRow(repo, { onSelect, onTogglePin, initialFolder } = {
     : `<span class="badge badge--public">Public</span>`;
 
   row.innerHTML = `
+    <label class="repo-row__select-label" title="Select repository">
+      <input type="checkbox" class="repo-checkbox" aria-label="Select ${escapeHtml(repo.name)}" />
+    </label>
     <span class="repo-row__status" data-role="status" data-status="no-key" title="AI summary: not configured" aria-label="AI summary status"></span>
     <span class="repo-row__name-cell">
       <button
@@ -66,6 +69,17 @@ export function createRepoRow(repo, { onSelect, onTogglePin, initialFolder } = {
       ${kindBadge}
     </span>
   `;
+
+  const checkbox = row.querySelector('.repo-checkbox');
+  checkbox?.addEventListener('change', (e) => {
+    e.stopPropagation();
+    if (onToggleSelect) onToggleSelect(repo.id, checkbox.checked);
+  });
+
+  row.updateBatchSelected = (isSelected) => {
+    row.classList.toggle('is-batch-selected', isSelected);
+    if (checkbox) checkbox.checked = isSelected;
+  };
 
   const pinBtn = row.querySelector('.repo-row__pin-btn');
   pinBtn?.addEventListener('click', (e) => {
@@ -107,7 +121,35 @@ export function createRepoRow(repo, { onSelect, onTogglePin, initialFolder } = {
     }
   };
 
-  row.addEventListener('click', () => onSelect(repo.id));
+  row.updateRepoData = (freshRepo) => {
+    repo.stars = freshRepo.stars;
+    repo.forksCount = freshRepo.forksCount;
+    repo.openIssues = freshRepo.openIssues;
+    repo.updatedAt = freshRepo.updatedAt;
+    repo.pushed_at = freshRepo.pushed_at;
+    repo.description = freshRepo.description;
+    repo.language = freshRepo.language;
+    repo.looksUntouched = freshRepo.looksUntouched;
+
+    row.updateStars();
+    const updatedEl = row.querySelector('.repo-row__updated');
+    if (updatedEl) {
+      updatedEl.textContent = timeAgo(repo.updatedAt);
+      updatedEl.title = `Updated ${new Date(repo.updatedAt).toLocaleString()}`;
+    }
+  };
+
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.repo-row__pin-btn') || e.target.closest('.repo-row__select-label') || e.target.closest('.repo-checkbox')) return;
+    if (row.closest('.is-select-mode')) {
+      if (checkbox) {
+        checkbox.checked = !checkbox.checked;
+        if (onToggleSelect) onToggleSelect(repo.id, checkbox.checked);
+      }
+      return;
+    }
+    if (onSelect) onSelect(repo.id);
+  });
   return row;
 }
 

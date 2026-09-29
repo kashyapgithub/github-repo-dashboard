@@ -51,6 +51,48 @@ export async function fetchReadmeExcerpt(owner, repoName, token, maxChars = 3000
   }
 }
 
+let currentRateLimit = {
+  limit: 5000,
+  remaining: 5000,
+  resetTime: null,
+  used: 0,
+};
+
+const rateLimitListeners = new Set();
+
+export function getRateLimitStatus() {
+  return { ...currentRateLimit };
+}
+
+export function onRateLimitChange(listener) {
+  rateLimitListeners.add(listener);
+  return () => rateLimitListeners.delete(listener);
+}
+
+function updateRateLimitFromHeaders(headers) {
+  if (!headers) return;
+  const limit = headers.get('x-ratelimit-limit');
+  const remaining = headers.get('x-ratelimit-remaining');
+  const reset = headers.get('x-ratelimit-reset');
+  const used = headers.get('x-ratelimit-used');
+
+  if (remaining !== null && remaining !== undefined) {
+    currentRateLimit = {
+      limit: limit ? parseInt(limit, 10) : 5000,
+      remaining: parseInt(remaining, 10),
+      resetTime: reset ? new Date(parseInt(reset, 10) * 1000) : null,
+      used: used ? parseInt(used, 10) : 0,
+    };
+    for (const listener of rateLimitListeners) {
+      try {
+        listener(currentRateLimit);
+      } catch (err) {
+        console.warn('Rate limit listener error:', err);
+      }
+    }
+  }
+}
+
 async function githubRequest(path, token, { acceptRaw = false } = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -59,6 +101,8 @@ async function githubRequest(path, token, { acceptRaw = false } = {}) {
       'X-GitHub-Api-Version': '2022-11-28',
     },
   });
+
+  updateRateLimitFromHeaders(response.headers);
 
   if (!response.ok) {
     throw new Error(describeGithubError(response.status));
@@ -311,4 +355,323 @@ function normalizeCommit(raw, repoInfo) {
     verified: Boolean(commit.verification?.verified),
   };
 }
+
+/**
+ * Fetches trending repositories from GitHub Search API.
+ * Supports timeframes (today, week, month), modes (breakout, surging),
+ * language, and topic filters.
+ */
+export async function fetchTrendingRepos(
+  token,
+  { timeframe = 'week', language = '', topic = '', mode = 'breakout', perPage = 30 } = {}
+) {
+  let days = 7;
+  if (timeframe === 'today') days = 2;
+  else if (timeframe === 'month') days = 30;
+
+  const sinceDate = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
+
+  let queryParts = [];
+  if (mode === 'surging') {
+    queryParts.push(`pushed:>${sinceDate}`);
+    queryParts.push(`stars:>250`);
+  } else {
+    // Default: Breakout launches created recently
+    queryParts.push(`created:>${sinceDate}`);
+  }
+
+  if (language && language !== 'all') {
+    queryParts.push(`language:${language.toLowerCase()}`);
+  }
+
+  if (topic && topic !== 'all') {
+    queryParts.push(`topic:${topic.toLowerCase()}`);
+  }
+
+  const query = queryParts.join(' ');
+  const data = await githubRequest(
+    `/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=${perPage}`,
+    token
+  );
+
+  const items = Array.isArray(data.items) ? data.items : [];
+  return items.map((item, idx) => {
+    const daysOld = Math.max(1, Math.round((Date.now() - new Date(item.created_at).getTime()) / 86400000));
+    const starsPerDay = Math.round(item.stargazers_count / daysOld);
+
+    return {
+      rank: idx + 1,
+      id: item.id,
+      name: item.name,
+      fullName: item.full_name,
+      owner: item.owner?.login || '',
+      ownerAvatar: item.owner?.avatar_url || '',
+      ownerUrl: item.owner?.html_url || '',
+      url: item.html_url,
+      description: item.description || '',
+      stars: item.stargazers_count ?? 0,
+      forks: item.forks_count ?? 0,
+      language: item.language || '',
+      topics: Array.isArray(item.topics) ? item.topics : [],
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+      pushedAt: item.pushed_at,
+      daysOld,
+      starsPerDay,
+      cloneUrl: item.clone_url || `https://github.com/${item.full_name}.git`,
+    };
+  });
+}
+
+/**
+ * Fetches repositories filtered by one or more topic categories.
+ * Supports sorting by:
+ * - 'trending': highest velocity/momentum in chosen timeframe (today, week, month)
+ * - 'stars': highest total stars
+ * - 'forks': highest forks count
+ * - 'updated': most recently updated
+ * Also supports minimum star thresholds (e.g. 100, 500, 1000) and language filter.
+ */
+export async function fetchReposByTopics(
+  token,
+  {
+    topics = [],
+    sortBy = 'trending',
+    timeframe = 'week',
+    minStars = 0,
+    language = '',
+    query = '',
+    perPage = 30,
+  } = {}
+) {
+  const queryParts = [];
+
+  // 1. Topic filtering (comma-separated acts as OR in GitHub Search API)
+  const validTopics = (Array.isArray(topics) ? topics : [topics])
+    .map((t) => (typeof t === 'string' ? t.toLowerCase().trim().replace(/^topic:/i, '') : ''))
+    .filter(Boolean);
+
+  if (validTopics.length > 0) {
+    queryParts.push(`topic:${validTopics.join(',')}`);
+  }
+
+  // 2. Extra keyword query if provided
+  if (query && query.trim()) {
+    queryParts.push(query.trim());
+  }
+
+  // 3. Timeframe constraint if sorting by trending
+  let days = 7;
+  if (timeframe === 'today') days = 2;
+  else if (timeframe === 'month') days = 30;
+
+  if (sortBy === 'trending') {
+    const sinceDate = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
+    queryParts.push(`pushed:>${sinceDate}`);
+  }
+
+  // 4. Minimum stars threshold
+  const minStarsNum = Number(minStars) || 0;
+  if (minStarsNum > 0) {
+    queryParts.push(`stars:>=${minStarsNum}`);
+  } else if (sortBy === 'trending') {
+    // Basic quality floor for trending discovery
+    queryParts.push(`stars:>10`);
+  }
+
+  // 5. Language filter
+  if (language && language !== 'all') {
+    queryParts.push(`language:${language.toLowerCase()}`);
+  }
+
+  // If queryParts is empty, default to popular AI/ML repos
+  if (queryParts.length === 0) {
+    queryParts.push('topic:ai-agents,model-classifier,llm stars:>100');
+  }
+
+  // Determine GitHub sort parameter
+  let ghSort = 'stars';
+  let ghOrder = 'desc';
+  if (sortBy === 'forks') {
+    ghSort = 'forks';
+  } else if (sortBy === 'updated') {
+    ghSort = 'updated';
+  } else {
+    ghSort = 'stars';
+  }
+
+  const queryString = queryParts.join(' ');
+  const data = await githubRequest(
+    `/search/repositories?q=${encodeURIComponent(queryString)}&sort=${ghSort}&order=${ghOrder}&per_page=${perPage}`,
+    token
+  );
+
+  const items = Array.isArray(data.items) ? data.items : [];
+  const normalized = items.map((item) => {
+    const daysOld = Math.max(1, Math.round((Date.now() - new Date(item.created_at).getTime()) / 86400000));
+    const starsPerDay = Math.round((item.stargazers_count ?? 0) / daysOld);
+
+    return {
+      id: item.id,
+      name: item.name,
+      fullName: item.full_name,
+      owner: item.owner?.login || '',
+      ownerAvatar: item.owner?.avatar_url || '',
+      ownerUrl: item.owner?.html_url || '',
+      url: item.html_url,
+      description: item.description || '',
+      stars: item.stargazers_count ?? 0,
+      forks: item.forks_count ?? 0,
+      language: item.language || '',
+      topics: Array.isArray(item.topics) ? item.topics : [],
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+      pushedAt: item.pushed_at,
+      daysOld,
+      starsPerDay,
+      cloneUrl: item.clone_url || `https://github.com/${item.full_name}.git`,
+    };
+  });
+
+  // If sorting by trending velocity, sort by starsPerDay descending so high-velocity breakout repos rank first
+  if (sortBy === 'trending') {
+    normalized.sort((a, b) => b.starsPerDay - a.starsPerDay || b.stars - a.stars);
+  }
+
+  // Assign 1-indexed ranks
+  return normalized.map((item, idx) => ({
+    ...item,
+    rank: idx + 1,
+  }));
+}
+
+/**
+ * Fetches the full raw README markdown for a repository.
+ * Returns null if no README exists (HTTP 404).
+ */
+export async function fetchFullReadme(owner, repoName, token) {
+  try {
+    const text = await githubRequest(`/repos/${owner}/${repoName}/readme`, token, {
+      acceptRaw: true,
+    });
+    return typeof text === 'string' ? text : '';
+  } catch (err) {
+    if (err.message && (err.message.includes('404') || err.message.includes('Not Found'))) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Fetches directory contents or file metadata for a given path.
+ * Returns sorted list with directories first, then files.
+ */
+export async function fetchRepoContents(owner, repoName, token, path = '') {
+  const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+  const endpoint = cleanPath ? `/repos/${owner}/${repoName}/contents/${cleanPath}` : `/repos/${owner}/${repoName}/contents`;
+  const items = await githubRequest(endpoint, token);
+  if (!Array.isArray(items)) {
+    return items;
+  }
+
+  return items
+    .map((item) => ({
+      name: item.name,
+      path: item.path,
+      type: item.type, // 'dir' | 'file' | 'symlink' | 'submodule'
+      size: item.size || 0,
+      url: item.html_url,
+      downloadUrl: item.download_url,
+    }))
+    .sort((a, b) => {
+      if (a.type === 'dir' && b.type !== 'dir') return -1;
+      if (a.type !== 'dir' && b.type === 'dir') return 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+}
+
+/**
+ * Fetches language byte distribution for a repository.
+ * e.g. { TypeScript: 154200, CSS: 23100, HTML: 12400 }
+ */
+export async function fetchRepoLanguages(owner, repoName, token) {
+  try {
+    const data = await githubRequest(`/repos/${owner}/${repoName}/languages`, token);
+    return data && typeof data === 'object' ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Fetches recent open issues and pull requests for a repository.
+ */
+export async function fetchRepoIssuesAndPRs(owner, repoName, token) {
+  try {
+    const items = await githubRequest(`/repos/${owner}/${repoName}/issues?state=open&per_page=15&sort=updated`, token);
+    if (!Array.isArray(items)) return [];
+
+    return items.map((item) => ({
+      id: item.id,
+      number: item.number,
+      title: item.title,
+      url: item.html_url,
+      isPR: Boolean(item.pull_request),
+      author: item.user?.login || 'unknown',
+      authorAvatar: item.user?.avatar_url || '',
+      labels: Array.isArray(item.labels)
+        ? item.labels.map((l) => ({
+            name: typeof l === 'string' ? l : l.name,
+            color: typeof l === 'object' && l.color ? `#${l.color}` : '#58a6ff',
+          }))
+        : [],
+      comments: item.comments || 0,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches commit activity for the last 12 weeks.
+ * Returns an array of 12 integers representing commits per week.
+ */
+export async function fetchRepoCommitActivity(owner, repoName, token) {
+  try {
+    const stats = await githubRequest(`/repos/${owner}/${repoName}/stats/commit_activity`, token);
+    if (Array.isArray(stats) && stats.length >= 12) {
+      return stats.slice(-12).map((w) => w.total || 0);
+    }
+  } catch {}
+
+  // Fallback: fetch recent commits and bucket into the last 12 weeks
+  try {
+    const commits = await githubRequest(`/repos/${owner}/${repoName}/commits?per_page=50`, token);
+    if (!Array.isArray(commits)) return new Array(12).fill(0);
+
+    const now = Date.now();
+    const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const weeklyBuckets = new Array(12).fill(0);
+
+    for (const c of commits) {
+      const dateStr = c.commit?.committer?.date || c.commit?.author?.date;
+      if (!dateStr) continue;
+      const t = new Date(dateStr).getTime();
+      const diffWeeks = Math.floor((now - t) / ONE_WEEK_MS);
+      if (diffWeeks >= 0 && diffWeeks < 12) {
+        // Index 11 is the most recent week, index 0 is 12 weeks ago
+        weeklyBuckets[11 - diffWeeks]++;
+      }
+    }
+    return weeklyBuckets;
+  } catch {
+    return new Array(12).fill(0);
+  }
+}
+
+
+
 

@@ -16,8 +16,13 @@ import {
   getRepoFolders,
   setRepoFolder,
   removeRepoFromFolder,
+  getRepoTags,
+  setRepoTags,
+  getCustomTags,
+  saveCustomTags,
+  addCustomTag,
 } from './modules/storage.js';
-import { fetchAllRepos, enrichForksWithParent } from './modules/github-api.js';
+import { fetchAllRepos, enrichForksWithParent, getRateLimitStatus, onRateLimitChange } from './modules/github-api.js';
 import { generateDescription } from './modules/ai/index.js';
 import { runWithConcurrency } from './modules/concurrency.js';
 import { renderSettingsPanel } from './modules/render/settingsPanel.js';
@@ -28,11 +33,20 @@ import { createRepoRow, setRowStatus } from './modules/render/repoRow.js';
 import { createRepoTile } from './modules/render/repoTile.js';
 import { renderDetailPanel } from './modules/render/detailPanel.js';
 import { renderCommitsPanel } from './modules/render/commitsPanel.js';
+import { renderTrendingPanel } from './modules/render/trendingPanel.js';
+import { renderCommandPalette } from './modules/render/commandPalette.js';
+import {
+  exportCatalogAsMarkdown,
+  exportCatalogAsCsv,
+  exportCatalogAsJson,
+  triggerDownload,
+} from './modules/catalogExport.js';
 import { escapeHtml } from './modules/format.js';
 
 const AI_REQUEST_CONCURRENCY = 3;
 const app = document.getElementById('app');
 let activeKeydownHandler = null;
+let onCatalogExportHandler = null;
 
 init();
 
@@ -48,12 +62,14 @@ export function closeWindowSafely() {
 }
 
 async function init() {
-  const [settings, uiPrefs, pinnedIds, folders, repoFolders] = await Promise.all([
+  const [settings, uiPrefs, pinnedIds, folders, repoFolders, repoTags, customTags] = await Promise.all([
     getSettings(),
     getUiPreferences(),
     getPinnedRepoIds(),
     getFolders(),
     getRepoFolders(),
+    getRepoTags(),
+    getCustomTags(),
   ]);
 
   if (!settings.githubToken) {
@@ -62,7 +78,12 @@ async function init() {
   }
 
   const shell = renderShell(uiPrefs);
-  renderSettingsPanel(shell.settingsSlot, { settings, onSaved: init, forceOpen: false });
+  renderSettingsPanel(shell.settingsSlot, {
+    settings,
+    onSaved: init,
+    forceOpen: false,
+    onExportCatalog: (format) => onCatalogExportHandler?.(format),
+  });
 
   // Wire up close window button
   shell.closeBtn?.addEventListener('click', closeWindowSafely);
@@ -165,7 +186,7 @@ async function init() {
     shell.headerCount.hidden = false;
   }
 
-  runDashboard(shell, repos, settings, uiPrefs, { folders, repoFolders });
+  runDashboard(shell, repos, settings, uiPrefs, { folders, repoFolders, repoTags, customTags });
 }
 
 function showFirstRunSetup(settings) {
@@ -261,6 +282,8 @@ function renderShell(uiPrefs) {
     <main class="main-area" data-slot="main"></main>
     <footer class="status-bar" data-slot="footer"></footer>
     <div class="commits-panel-slot" data-slot="commits"></div>
+    <div class="trending-panel-slot" data-slot="trending"></div>
+    <div class="command-palette-slot" data-slot="palette"></div>
   `;
 
   return {
@@ -270,6 +293,8 @@ function renderShell(uiPrefs) {
     controlsSlot: app.querySelector('[data-slot="controls"]'),
     foldersSlot: app.querySelector('[data-slot="folders"]'),
     commitsSlot: app.querySelector('[data-slot="commits"]'),
+    trendingSlot: app.querySelector('[data-slot="trending"]'),
+    paletteSlot: app.querySelector('[data-slot="palette"]'),
     mainArea: app.querySelector('[data-slot="main"]'),
     footer: app.querySelector('[data-slot="footer"]'),
     closeBtn: app.querySelector('#btn-close-window'),
@@ -280,11 +305,13 @@ function renderShell(uiPrefs) {
   };
 }
 
-function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolders = {} } = {}) {
+function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolders = {}, repoTags = {}, customTags = [] } = {}) {
   let currentViewMode = uiPrefs.viewMode;
   let currentGroupBy = uiPrefs.groupBy;
   let isInspectorOpen = uiPrefs.inspectorOpen;
   let currentFolders = [...folders];
+  let currentRepoTags = { ...repoTags };
+  let currentCustomTags = [...customTags];
   let activeFolderId = uiPrefs.activeFolderId || 'all';
 
   const rowsByRepoId = new Map();
@@ -292,6 +319,63 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
   const descriptionsById = new Map();
   let visibleRepos = [];
   let selectedRepoId = null;
+  let lastSyncTime = null;
+  let isSelectMode = false;
+  const selectedRepoIds = new Set();
+
+  function executeCatalogExport(format) {
+    const descriptions = new Map();
+    for (const [id, entry] of descriptionsById.entries()) {
+      if (entry?.status === 'ready' && entry.text) {
+        descriptions.set(id, entry.text);
+      }
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (format === 'markdown') {
+      const md = exportCatalogAsMarkdown(repos, descriptions, currentRepoTags, currentCustomTags, currentFolders);
+      triggerDownload(`github-catalog-${today}.md`, md, 'text/markdown;charset=utf-8');
+    } else if (format === 'csv') {
+      const csv = exportCatalogAsCsv(repos, descriptions, currentRepoTags, currentCustomTags, currentFolders);
+      triggerDownload(`github-catalog-${today}.csv`, csv, 'text/csv;charset=utf-8');
+    } else if (format === 'json') {
+      const json = exportCatalogAsJson(repos, descriptions, currentRepoTags, currentCustomTags, currentFolders);
+      triggerDownload(`github-catalog-${today}.json`, json, 'application/json;charset=utf-8');
+    }
+  }
+
+  onCatalogExportHandler = executeCatalogExport;
+
+  async function handleAssignTag(repoId, tagId) {
+    const current = currentRepoTags[repoId] || [];
+    if (!current.includes(tagId)) {
+      currentRepoTags[repoId] = [...current, tagId];
+      await setRepoTags(currentRepoTags);
+      shell.controlsSlot.setCustomTags?.(currentCustomTags, currentRepoTags);
+      if (selectedRepoId === repoId) {
+        refreshDetailPanel();
+      }
+    }
+  }
+
+  async function handleRemoveTag(repoId, tagId) {
+    const current = currentRepoTags[repoId] || [];
+    if (current.includes(tagId)) {
+      currentRepoTags[repoId] = current.filter((id) => id !== tagId);
+      await setRepoTags(currentRepoTags);
+      shell.controlsSlot.setCustomTags?.(currentCustomTags, currentRepoTags);
+      if (selectedRepoId === repoId) {
+        refreshDetailPanel();
+      }
+    }
+  }
+
+  async function handleCreateTag(name, color) {
+    const newTag = await addCustomTag(name, color);
+    currentCustomTags.push(newTag);
+    shell.controlsSlot.setCustomTags?.(currentCustomTags, currentRepoTags);
+    refreshDetailPanel();
+    return newTag;
+  }
 
   function findRepo(id) {
     return repos.find((repo) => repo.id === id);
@@ -366,35 +450,43 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
     },
   });
 
+  const trendingPanel = renderTrendingPanel(shell.trendingSlot, {
+    token: settings.githubToken,
+    aiProvider: settings.aiProvider,
+    aiApiKey: settings.aiProvider ? settings.aiApiKeys?.[settings.aiProvider] : null,
+    folders: currentFolders,
+    pinnedRepoIds: repos.filter((r) => r.isPinned).map((r) => r.id),
+    onTogglePin: handleTogglePin,
+    onAssignFolder: handleAssignFolder,
+  });
+
   async function handleTogglePin(repoId) {
-    const repo = findRepo(repoId);
-    if (!repo) return;
     const isNowPinned = await togglePinnedRepo(repoId);
-    repo.isPinned = isNowPinned;
-
-    rowsByRepoId.get(repoId)?.updatePin?.(isNowPinned);
-    tilesByRepoId.get(repoId)?.updatePin?.(isNowPinned);
-
-    folderBar.updateCounts(computeFolderCounts());
-
-    if (selectedRepoId === repoId) {
-      refreshDetailPanel();
+    const repo = findRepo(repoId);
+    if (repo) {
+      repo.isPinned = isNowPinned;
+      rowsByRepoId.get(repoId)?.updatePin?.(isNowPinned);
+      tilesByRepoId.get(repoId)?.updatePin?.(isNowPinned);
+      folderBar.updateCounts(computeFolderCounts());
+      if (selectedRepoId === repoId) {
+        refreshDetailPanel();
+      }
+      shell.controlsSlot.applyFilter?.();
     }
-    shell.controlsSlot.applyFilter?.();
+    trendingPanel?.updatePinnedState?.(repos.filter((r) => r.isPinned).map((r) => r.id));
   }
 
   async function handleAssignFolder(repoId, folderId) {
+    if (folderId) {
+      await setRepoFolder(repoId, folderId);
+    } else {
+      await removeRepoFromFolder(repoId);
+    }
+
     const repo = findRepo(repoId);
     if (!repo) return;
 
-    if (folderId) {
-      await setRepoFolder(repoId, folderId);
-      repo.folderId = folderId;
-    } else {
-      await removeRepoFromFolder(repoId);
-      repo.folderId = null;
-    }
-
+    repo.folderId = folderId || null;
     const assignedFolder = currentFolders.find((f) => f.id === repo.folderId) || null;
 
     rowsByRepoId.get(repoId)?.updateFolder?.(assignedFolder);
@@ -406,6 +498,139 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
       refreshDetailPanel();
     }
     shell.controlsSlot.applyFilter?.();
+  }
+
+  // Batch Action Bar element
+  const batchBarEl = document.createElement('div');
+  batchBarEl.className = 'batch-action-bar';
+  batchBarEl.setAttribute('role', 'toolbar');
+  batchBarEl.setAttribute('aria-label', 'Batch repository actions');
+  batchBarEl.hidden = true;
+  shell.mainArea.appendChild(batchBarEl);
+
+  function updateBatchActionBar() {
+    if (!isSelectMode) {
+      batchBarEl.hidden = true;
+      return;
+    }
+    batchBarEl.hidden = false;
+    const count = selectedRepoIds.size;
+    const allSelectedPinned = count > 0 && Array.from(selectedRepoIds).every((id) => findRepo(id)?.isPinned);
+
+    batchBarEl.innerHTML = `
+      <div class="batch-action-bar__info">
+        <span class="batch-action-bar__count">${count} selected</span>
+      </div>
+      <div class="batch-action-bar__actions">
+        <button type="button" class="batch-btn batch-btn--select-all" id="batch-btn-select-all" title="Select all visible repositories">Select All</button>
+        <button type="button" class="batch-btn" id="batch-btn-clear" title="Clear selection">Clear</button>
+        <div class="batch-divider"></div>
+        <button type="button" class="batch-btn" id="batch-btn-pin" title="${allSelectedPinned ? 'Unpin selected' : 'Pin selected'}" ${count === 0 ? 'disabled' : ''}>
+          📌 ${allSelectedPinned ? 'Unpin' : 'Pin'}
+        </button>
+        <div class="batch-select-wrap">
+          <select class="batch-folder-select" id="batch-folder-select" ${count === 0 ? 'disabled' : ''}>
+            <option value="" disabled selected>Move to Folder…</option>
+            <option value="__none__">None (Unfiled)</option>
+            ${currentFolders.map((f) => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="batch-select-wrap">
+          <select class="batch-folder-select" id="batch-tag-select" ${count === 0 ? 'disabled' : ''}>
+            <option value="" disabled selected>Add Tag…</option>
+            ${currentCustomTags.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="batch-divider"></div>
+        <button type="button" class="batch-btn batch-btn--done" id="batch-btn-done" title="Exit select mode">✕ Done</button>
+      </div>
+    `;
+
+    batchBarEl.querySelector('#batch-btn-select-all')?.addEventListener('click', () => {
+      for (const repo of visibleRepos) {
+        selectedRepoIds.add(repo.id);
+        rowsByRepoId.get(repo.id)?.updateBatchSelected?.(true);
+        tilesByRepoId.get(repo.id)?.updateBatchSelected?.(true);
+      }
+      updateBatchActionBar();
+    });
+
+    batchBarEl.querySelector('#batch-btn-clear')?.addEventListener('click', () => {
+      for (const id of selectedRepoIds) {
+        rowsByRepoId.get(id)?.updateBatchSelected?.(false);
+        tilesByRepoId.get(id)?.updateBatchSelected?.(false);
+      }
+      selectedRepoIds.clear();
+      updateBatchActionBar();
+    });
+
+    batchBarEl.querySelector('#batch-btn-pin')?.addEventListener('click', async () => {
+      const ids = Array.from(selectedRepoIds);
+      const shouldPin = !allSelectedPinned;
+      for (const id of ids) {
+        const repo = findRepo(id);
+        if (repo && repo.isPinned !== shouldPin) {
+          await handleTogglePin(id);
+        }
+      }
+      updateBatchActionBar();
+    });
+
+    batchBarEl.querySelector('#batch-folder-select')?.addEventListener('change', async (e) => {
+      const val = e.target.value;
+      if (!val) return;
+      const targetFolderId = val === '__none__' ? null : val;
+      const ids = Array.from(selectedRepoIds);
+      for (const id of ids) {
+        await handleAssignFolder(id, targetFolderId);
+      }
+      updateBatchActionBar();
+    });
+
+    batchBarEl.querySelector('#batch-tag-select')?.addEventListener('change', async (e) => {
+      const tagId = e.target.value;
+      if (!tagId) return;
+      const ids = Array.from(selectedRepoIds);
+      for (const id of ids) {
+        const current = currentRepoTags[id] || [];
+        if (!current.includes(tagId)) {
+          currentRepoTags[id] = [...current, tagId];
+        }
+      }
+      await setRepoTags(currentRepoTags);
+      shell.controlsSlot.setCustomTags?.(currentCustomTags, currentRepoTags);
+      refreshDetailPanel();
+      updateBatchActionBar();
+    });
+
+    batchBarEl.querySelector('#batch-btn-done')?.addEventListener('click', () => {
+      toggleSelectMode(false);
+    });
+  }
+
+  function handleToggleSelect(repoId, isSelected) {
+    if (isSelected) {
+      selectedRepoIds.add(repoId);
+    } else {
+      selectedRepoIds.delete(repoId);
+    }
+    rowsByRepoId.get(repoId)?.updateBatchSelected?.(isSelected);
+    tilesByRepoId.get(repoId)?.updateBatchSelected?.(isSelected);
+    updateBatchActionBar();
+  }
+
+  function toggleSelectMode(force) {
+    isSelectMode = force !== undefined ? force : !isSelectMode;
+    shell.mainArea.classList.toggle('is-select-mode', isSelectMode);
+    shell.controlsSlot.setSelectModeActive?.(isSelectMode);
+    if (!isSelectMode) {
+      for (const id of selectedRepoIds) {
+        rowsByRepoId.get(id)?.updateBatchSelected?.(false);
+        tilesByRepoId.get(id)?.updateBatchSelected?.(false);
+      }
+      selectedRepoIds.clear();
+    }
+    updateBatchActionBar();
   }
 
   async function regenerateSingleRepo(repoId) {
@@ -455,6 +680,11 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
       onAssignFolder: handleAssignFolder,
       onCreateFolder: () => folderBar.openNewFolderModal(),
       folders: currentFolders,
+      repoTags: currentRepoTags,
+      customTags: currentCustomTags,
+      onAssignTag: handleAssignTag,
+      onRemoveTag: handleRemoveTag,
+      onCreateTag: handleCreateTag,
       githubToken: settings.githubToken,
       onParentLoaded: (enrichedRepo) => {
         rowsByRepoId.get(enrichedRepo.id)?.updateStars?.();
@@ -463,8 +693,8 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
     });
   }
 
-  function selectRepo(repoId) {
-    if (selectedRepoId != null) {
+  function selectRepo(repoId, { preserveScroll = false } = {}) {
+    if (selectedRepoId != null && selectedRepoId !== repoId) {
       rowsByRepoId.get(selectedRepoId)?.classList.remove('repo-row--selected');
       tilesByRepoId.get(selectedRepoId)?.setSelected?.(false);
     }
@@ -475,10 +705,12 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
     row?.classList.add('repo-row--selected');
     tile?.setSelected?.(true);
 
-    if (currentViewMode === 'list') {
-      row?.scrollIntoView({ block: 'nearest' });
-    } else {
-      tile?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (!preserveScroll) {
+      if (currentViewMode === 'list') {
+        row?.scrollIntoView({ block: 'nearest' });
+      } else {
+        tile?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
     }
     refreshDetailPanel();
   }
@@ -505,6 +737,7 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
       createRepoRow(repo, {
         onSelect: selectRepo,
         onTogglePin: handleTogglePin,
+        onToggleSelect: handleToggleSelect,
         initialFolder: folderObj,
       })
     );
@@ -513,6 +746,7 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
       createRepoTile(repo, {
         onSelect: selectRepo,
         onTogglePin: handleTogglePin,
+        onToggleSelect: handleToggleSelect,
         initialFolder: folderObj,
         initialAiEntry: descriptionsById.get(repo.id),
       })
@@ -526,11 +760,16 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
     },
   });
 
+  let isBackgroundRefreshing = false;
+
   // Render visible repositories into either List or Floor Tiles grid
-  function renderVisibleRepos(filtered, { groupBy = currentGroupBy, viewMode = currentViewMode } = {}) {
+  function renderVisibleRepos(filtered, { groupBy = currentGroupBy, viewMode = currentViewMode, preserveScroll = false } = {}) {
     visibleRepos = filtered;
     currentGroupBy = groupBy;
     currentViewMode = viewMode;
+
+    const savedListScroll = shell.listView?.scrollTop ?? 0;
+    const savedGridScroll = shell.gridView?.scrollTop ?? 0;
 
     if (viewMode === 'list') {
       shell.listView.classList.remove('repo-view--hidden');
@@ -556,6 +795,9 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
             shell.list.appendChild(rowsByRepoId.get(repo.id));
           }
         }
+      }
+      if (preserveScroll && shell.listView) {
+        shell.listView.scrollTop = savedListScroll;
       }
     } else {
       shell.gridView.classList.remove('repo-view--hidden');
@@ -588,16 +830,19 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
           shell.grid.appendChild(gridEl);
         }
       }
+      if (preserveScroll && shell.gridView) {
+        shell.gridView.scrollTop = savedGridScroll;
+      }
     }
 
     const stillVisible = filtered.some((r) => r.id === selectedRepoId);
     if (!stillVisible) {
-      selectRepo(filtered.length > 0 ? filtered[0].id : null);
+      selectRepo(filtered.length > 0 ? filtered[0].id : null, { preserveScroll: true });
     } else if (selectedRepoId != null) {
-      selectRepo(selectedRepoId);
+      selectRepo(selectedRepoId, { preserveScroll: true });
     }
 
-    updateFooter(shell.footer, filtered.length, repos.length, currentViewMode);
+    updateFooter(shell.footer, filtered.length, repos.length, currentViewMode, lastSyncTime);
   }
 
   // Controls bar with sync to stats bar, view switcher, group by, inspector toggle
@@ -612,7 +857,7 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
       } else if (activeFolderId && activeFolderId !== 'all') {
         folderFiltered = filtered.filter((r) => r.folderId === activeFolderId);
       }
-      renderVisibleRepos(folderFiltered, { groupBy, viewMode });
+      renderVisibleRepos(folderFiltered, { groupBy, viewMode, preserveScroll: isBackgroundRefreshing });
     },
     onViewModeChange: (newMode) => {
       currentViewMode = newMode;
@@ -627,15 +872,225 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
     onToggleInspector: (isOpen) => {
       toggleInspector(isOpen);
     },
+    onToggleSelectMode: () => {
+      toggleSelectMode();
+    },
     onOpenCommits: () => {
       commitsPanel.open();
     },
+    onOpenTrending: () => {
+      trendingPanel.open();
+    },
     onRefresh: async () => {
-      await init();
+      await backgroundRefresh({ isManual: true });
     },
   });
 
   shell.controlsSlot.setRepos(repos);
+  shell.controlsSlot.setCustomTags?.(currentCustomTags, currentRepoTags);
+
+  async function backgroundRefresh({ isManual = false } = {}) {
+    if (isBackgroundRefreshing || !settings.githubToken) return;
+    isBackgroundRefreshing = true;
+
+    const refreshBtn = shell.controlsSlot.querySelector('#repo-refresh');
+    if (refreshBtn) {
+      refreshBtn.classList.add('is-refreshing');
+      refreshBtn.title = 'Syncing repository updates from GitHub…';
+    }
+
+    try {
+      const [freshRepos, latestPinnedIds, latestFolders, latestRepoFolders, latestRepoTags, latestCustomTags] = await Promise.all([
+        fetchAllRepos(settings.githubToken),
+        getPinnedRepoIds(),
+        getFolders(),
+        getRepoFolders(),
+        getRepoTags(),
+        getCustomTags(),
+      ]);
+
+      currentFolders = latestFolders;
+      currentRepoTags = latestRepoTags;
+      currentCustomTags = latestCustomTags;
+      shell.controlsSlot.setCustomTags?.(currentCustomTags, currentRepoTags);
+      const pinnedSet = new Set(latestPinnedIds);
+      const existingMap = new Map(repos.map((r) => [r.id, r]));
+      const freshMap = new Map(freshRepos.map((r) => [r.id, r]));
+
+      const modifiedReposForAi = [];
+      const newForksToEnrich = [];
+
+      // Update existing repos in-place and add newly discovered repos
+      for (const fresh of freshRepos) {
+        fresh.isPinned = pinnedSet.has(fresh.id);
+        fresh.folderId = latestRepoFolders[fresh.id] || null;
+
+        const existing = existingMap.get(fresh.id);
+        if (existing) {
+          const pushChanged = existing.pushed_at !== fresh.pushed_at;
+
+          // Preserve upstream enriched parent data if fresh doesn't have it yet
+          if (existing.parent && !fresh.parent) {
+            fresh.parent = existing.parent;
+            fresh.parentStars = existing.parentStars;
+          }
+
+          // Update existing repo in memory
+          Object.assign(existing, fresh);
+
+          // Update in-place on DOM elements
+          rowsByRepoId.get(existing.id)?.updateRepoData?.(fresh);
+          tilesByRepoId.get(existing.id)?.updateRepoData?.(fresh);
+
+          if (pushChanged) {
+            modifiedReposForAi.push(existing);
+          }
+        } else {
+          // Brand new repo created or forked
+          repos.push(fresh);
+          existingMap.set(fresh.id, fresh);
+
+          const folderObj = currentFolders.find((f) => f.id === fresh.folderId) || null;
+          rowsByRepoId.set(
+            fresh.id,
+            createRepoRow(fresh, {
+              onSelect: selectRepo,
+              onTogglePin: handleTogglePin,
+              onToggleSelect: handleToggleSelect,
+              initialFolder: folderObj,
+            })
+          );
+          tilesByRepoId.set(
+            fresh.id,
+            createRepoTile(fresh, {
+              onSelect: selectRepo,
+              onTogglePin: handleTogglePin,
+              onToggleSelect: handleToggleSelect,
+              initialFolder: folderObj,
+              initialAiEntry: descriptionsById.get(fresh.id),
+            })
+          );
+
+          modifiedReposForAi.push(fresh);
+          if (fresh.isFork) {
+            newForksToEnrich.push(fresh);
+          }
+        }
+      }
+
+      // Check for removed repos (deleted or transferred away on GitHub)
+      for (let i = repos.length - 1; i >= 0; i--) {
+        const r = repos[i];
+        if (!freshMap.has(r.id)) {
+          repos.splice(i, 1);
+          rowsByRepoId.delete(r.id);
+          tilesByRepoId.delete(r.id);
+          descriptionsById.delete(r.id);
+        }
+      }
+
+      // Update header count badge
+      if (shell.headerCount) {
+        shell.headerCount.textContent = `${repos.length} repo${repos.length === 1 ? '' : 's'}`;
+      }
+
+      // Update stats bar numbers in-place (keeps active stat filter!)
+      shell.statsSlot?.updateCounts?.(repos);
+
+      // Update folder bar counts in-place (keeps active folder selection!)
+      folderBar.updateCounts(computeFolderCounts());
+
+      // Update commits panel repo references
+      commitsPanel.setRepos(repos);
+
+      // Update trending panel pinned state
+      trendingPanel.updatePinnedState(repos.filter((r) => r.isPinned).map((r) => r.id));
+
+      // Re-apply filter without disturbing active user input, sort, or scroll
+      shell.controlsSlot.setRepos(repos);
+
+      // Refresh detail inspector if open on selected repo
+      if (selectedRepoId != null) {
+        refreshDetailPanel();
+      }
+
+      // Set last sync timestamp
+      lastSyncTime = formatShortTime(new Date());
+      updateFooter(shell.footer, visibleRepos.length, repos.length, currentViewMode, lastSyncTime);
+
+      // Background AI generation for repos that changed pushed_at
+      if (modifiedReposForAi.length > 0 && settings.aiProvider) {
+        fillInAiDescriptions(
+          modifiedReposForAi,
+          rowsByRepoId,
+          tilesByRepoId,
+          descriptionsById,
+          settings,
+          () => selectedRepoId,
+          refreshDetailPanel
+        );
+      }
+
+      // Background fork enrichment for any new forks
+      if (newForksToEnrich.length > 0 && settings.githubToken) {
+        enrichForksWithParent(newForksToEnrich, settings.githubToken, (enrichedRepo) => {
+          rowsByRepoId.get(enrichedRepo.id)?.updateStars?.();
+          tilesByRepoId.get(enrichedRepo.id)?.updateStars?.();
+          if (selectedRepoId === enrichedRepo.id) {
+            refreshDetailPanel();
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Background auto-refresh error:', err);
+    } finally {
+      isBackgroundRefreshing = false;
+      if (refreshBtn) {
+        refreshBtn.classList.remove('is-refreshing');
+        refreshBtn.title = lastSyncTime ? `Refresh repositories (Synced ${lastSyncTime})` : 'Refresh repositories from GitHub';
+      }
+    }
+  }
+
+  const commandPalette = renderCommandPalette(shell.paletteSlot, {
+    getRepos: () => repos,
+    onSelectRepo: (repoId) => {
+      selectRepo(repoId);
+    },
+    onViewMode: (mode) => {
+      shell.controlsSlot.setViewMode?.(mode);
+    },
+    onGroupBy: (group) => {
+      shell.controlsSlot.setGroupBy?.(group);
+    },
+    onFilter: (filterId) => {
+      shell.controlsSlot.setFilter?.(filterId);
+    },
+    onOpenCommits: () => {
+      commitsPanel.open();
+    },
+    onOpenTrending: () => {
+      trendingPanel.open();
+    },
+    onToggleSelectMode: () => {
+      toggleSelectMode();
+    },
+    onToggleInspector: () => {
+      toggleInspector();
+    },
+    onRefresh: async () => {
+      await backgroundRefresh({ isManual: true });
+    },
+    onOpenSettings: () => {
+      shell.settingsSlot.querySelector('.settings__toggle')?.click();
+    },
+    onExportConfig: () => {
+      const exportBtn = shell.settingsSlot.querySelector('#btn-export-config');
+      if (exportBtn) exportBtn.click();
+      else shell.settingsSlot.querySelector('.settings__toggle')?.click();
+    },
+    onExportCatalog: (format) => onCatalogExportHandler?.(format),
+  });
 
   setUpKeyboardShortcuts(
     shell,
@@ -645,7 +1100,13 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
     () => currentViewMode,
     () => toggleInspector(),
     () => (commitsPanel.isOpen() ? commitsPanel.close() : commitsPanel.open()),
-    handleTogglePin
+    handleTogglePin,
+    () => (trendingPanel.isOpen() ? trendingPanel.close() : trendingPanel.open()),
+    commitsPanel,
+    trendingPanel,
+    commandPalette,
+    toggleSelectMode,
+    () => isSelectMode
   );
 
   fillInAiDescriptions(repos, rowsByRepoId, tilesByRepoId, descriptionsById, settings, () => selectedRepoId, refreshDetailPanel);
@@ -659,6 +1120,41 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
       }
     });
   }
+
+  // Set initial sync time
+  lastSyncTime = formatShortTime(new Date());
+  updateFooter(shell.footer, repos.length, repos.length, currentViewMode, lastSyncTime);
+
+  // Live Rate-Limit Quota Monitor in footer
+  const unsubscribeRateLimit = onRateLimitChange((rl) => {
+    updateFooter(shell.footer, visibleRepos.length, repos.length, currentViewMode, lastSyncTime, rl);
+  });
+
+  // Background auto-refresh according to user preference
+  let autoRefreshTimer = null;
+  function scheduleAutoRefresh(intervalMinutes) {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
+    const mins = intervalMinutes !== undefined ? intervalMinutes : (settings.autoRefreshInterval ?? 10);
+    if (mins > 0) {
+      autoRefreshTimer = setInterval(() => {
+        backgroundRefresh({ isManual: false });
+      }, mins * 60 * 1000);
+    }
+  }
+
+  scheduleAutoRefresh(settings.autoRefreshInterval);
+
+  window.addEventListener('beforeunload', () => {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    unsubscribeRateLimit();
+  });
+  window.addEventListener('unload', () => {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    unsubscribeRateLimit();
+  });
 }
 
 function groupRepositories(repoList, groupBy, folders = []) {
@@ -750,20 +1246,37 @@ function groupRepositories(repoList, groupBy, folders = []) {
   return [{ id: 'all', title: null, repos: repoList }];
 }
 
-function updateFooter(footer, visibleCount, totalCount, viewMode) {
+function formatShortTime(date) {
+  try {
+    return new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(date);
+  } catch {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+}
+
+function updateFooter(footer, visibleCount, totalCount, viewMode, syncTime = null, rateLimit = null) {
   const isTiles = viewMode === 'tiles';
+  const syncStr = syncTime ? ` · Synced ${syncTime}` : '';
+  const rl = rateLimit || getRateLimitStatus();
+  const rateLimitStr = rl && rl.remaining !== undefined
+    ? `<span class="footer-rate-limit" title="GitHub API quota: ${rl.remaining.toLocaleString()} remaining of ${rl.limit.toLocaleString()} hourly requests"> · ${rl.remaining.toLocaleString()} API calls left</span>`
+    : '';
+
   footer.innerHTML = `
     <div class="footer-left">
-      <span class="footer-count">${visibleCount} of ${totalCount} repositories</span>
+      <span class="footer-count">${visibleCount} of ${totalCount} repositories${syncStr}${rateLimitStr}</span>
       <span class="footer-mode-badge">${isTiles ? '⊞ Floor Tiles View' : '≡ List View'}</span>
     </div>
     <div class="footer-shortcuts">
+      <span class="shortcut-item"><kbd>⌘K</kbd> Actions</span>
+      <span class="shortcut-item"><kbd>M</kbd> Select</span>
       <span class="shortcut-item"><kbd>Esc</kbd> Close</span>
       <span class="shortcut-item"><kbd>${isTiles ? '←↑↓→' : '↑↓'}</kbd> Navigate</span>
       <span class="shortcut-item"><kbd>Enter</kbd> Open</span>
       <span class="shortcut-item"><kbd>P</kbd> Pin</span>
       <span class="shortcut-item"><kbd>I</kbd> Details</span>
       <span class="shortcut-item"><kbd>C</kbd> Commits</span>
+      <span class="shortcut-item"><kbd>T</kbd> Trending</span>
       <span class="shortcut-item"><kbd>/</kbd> Search</span>
     </div>
   `;
@@ -777,7 +1290,13 @@ function setUpKeyboardShortcuts(
   getViewMode,
   toggleInspector,
   toggleCommits,
-  togglePin
+  togglePin,
+  toggleTrending,
+  commitsPanel,
+  trendingPanel,
+  commandPalette,
+  toggleSelectMode,
+  isSelectModeActive
 ) {
   if (activeKeydownHandler) {
     document.removeEventListener('keydown', activeKeydownHandler);
@@ -798,19 +1317,36 @@ function setUpKeyboardShortcuts(
   }
 
   activeKeydownHandler = (event) => {
-    const tag = document.activeElement.tagName;
-    const isTyping = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+    // Spotlight command palette shortcut Cmd+K or Ctrl+K works from anywhere
+    if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
+      event.preventDefault();
+      commandPalette?.toggle();
+      return;
+    }
 
     if (event.key === 'Escape') {
       event.preventDefault();
+      if (commandPalette?.isOpen?.()) {
+        commandPalette.close();
+        return;
+      }
       const modal = document.querySelector('.modal-backdrop--visible');
       if (modal) {
         modal.classList.remove('modal-backdrop--visible');
-      } else {
-        closeWindowSafely();
+        if (trendingPanel?.isOpen()) trendingPanel.close();
+        if (commitsPanel?.isOpen()) commitsPanel.close();
+        return;
       }
+      if (isSelectModeActive?.()) {
+        toggleSelectMode?.(false);
+        return;
+      }
+      closeWindowSafely();
       return;
     }
+
+    const tag = document.activeElement.tagName;
+    const isTyping = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
 
     if (event.key === '/' && !isTyping) {
       event.preventDefault();
@@ -841,12 +1377,18 @@ function setUpKeyboardShortcuts(
       event.preventDefault();
       const selId = getSelectedId();
       if (selId && togglePin) togglePin(selId);
+    } else if (event.key === 'm' || event.key === 'M') {
+      event.preventDefault();
+      toggleSelectMode?.();
     } else if (event.key === 'i' || event.key === 'I') {
       event.preventDefault();
       toggleInspector();
     } else if (event.key === 'c' || event.key === 'C') {
       event.preventDefault();
       toggleCommits?.();
+    } else if (event.key === 't' || event.key === 'T') {
+      event.preventDefault();
+      toggleTrending?.();
     }
   };
 

@@ -2,8 +2,8 @@
 //
 // Renders the settings form as a centered modal (with a backdrop).
 
-import { saveSettings, clearDescriptionCache } from '../storage.js';
-import { testGithubToken } from '../github-api.js';
+import { saveSettings, clearDescriptionCache, exportConfiguration, importConfiguration } from '../storage.js';
+import { testGithubToken, getRateLimitStatus, onRateLimitChange } from '../github-api.js';
 import { testAiKey } from '../ai/index.js';
 import { escapeHtml } from '../format.js';
 
@@ -28,7 +28,7 @@ const PROVIDER_HINTS = {
   openrouter: 'Unified access to 300+ models. Get your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" class="link-external">openrouter.ai/keys ↗</a>.',
 };
 
-export function renderSettingsPanel(container, { settings, onSaved, forceOpen }) {
+export function renderSettingsPanel(container, { settings, onSaved, forceOpen, onExportCatalog }) {
   container.innerHTML = `
     ${
       forceOpen
@@ -144,6 +144,106 @@ export function renderSettingsPanel(container, { settings, onSaved, forceOpen })
             )
             .join('')}
 
+          <!-- Auto-Refresh Cadence -->
+          <div class="form-group">
+            <label for="select-refresh-interval">
+              Auto-Refresh Cadence
+            </label>
+            <div class="select-wrap">
+              <select id="select-refresh-interval" name="autoRefreshInterval">
+                <option value="5" ${settings.autoRefreshInterval === 5 ? 'selected' : ''}>Every 5 minutes</option>
+                <option value="10" ${(!settings.autoRefreshInterval || settings.autoRefreshInterval === 10) ? 'selected' : ''}>Every 10 minutes (Default)</option>
+                <option value="30" ${settings.autoRefreshInterval === 30 ? 'selected' : ''}>Every 30 minutes</option>
+                <option value="60" ${settings.autoRefreshInterval === 60 ? 'selected' : ''}>Every 1 hour</option>
+                <option value="0" ${settings.autoRefreshInterval === 0 ? 'selected' : ''}>Manual only (No background timer)</option>
+              </select>
+              <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
+              </svg>
+            </div>
+            <p class="settings__hint">
+              Updates repository stats and data in the background without resetting your active UI state or scroll position.
+            </p>
+          </div>
+
+          <!-- GitHub API Rate Limit Status -->
+          <div class="form-group settings__rate-limit-group">
+            <label>GitHub API Quota Status</label>
+            <div class="rate-limit-card" id="settings-rate-limit">
+              <div class="rate-limit-row">
+                <span class="rate-limit-label">Hourly API Quota</span>
+                <span class="rate-limit-value font-mono" id="rate-limit-remaining-val">Checking quota…</span>
+              </div>
+              <div class="rate-limit-progress-bar">
+                <div class="rate-limit-progress-fill" id="rate-limit-fill" style="width: 100%;"></div>
+              </div>
+              <div class="rate-limit-sub">
+                <span id="rate-limit-reset-val">Resets in —</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Export Repository Catalog -->
+          ${
+            forceOpen
+              ? ''
+              : `
+              <div class="form-group settings__catalog-export-group">
+                <label>Export Repository Catalog</label>
+                <div class="settings__backup-actions settings__catalog-actions">
+                  <button type="button" class="btn-secondary" id="btn-export-catalog-md" title="Export catalog as clean GitHub Markdown table">
+                    <svg viewBox="0 0 16 16" fill="currentColor" class="btn-icon-svg">
+                      <path d="M0 3.75C0 2.784.784 2 1.75 2h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 14H1.75A1.75 1.75 0 0 1 0 12.25v-8.5Zm1.75-.25a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75ZM3 5h2v6H3V5Zm4 0h2v6H7V5Zm4 0h2v6h-2V5Z"/>
+                    </svg>
+                    <span>Markdown (.md)</span>
+                  </button>
+                  <button type="button" class="btn-secondary" id="btn-export-catalog-csv" title="Export catalog as CSV spreadsheet">
+                    <svg viewBox="0 0 16 16" fill="currentColor" class="btn-icon-svg">
+                      <path d="M2.5 1.75v11.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V5.328a.25.25 0 0 0-.073-.177L9.854 1.573A.25.25 0 0 0 9.672 1.5H2.75a.25.25 0 0 0-.25.25Zm-1.5 0A1.75 1.75 0 0 1 2.75 0h6.922c.464 0 .909.184 1.237.513l3.575 3.575c.33.328.514.773.514 1.24V13.25A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V1.75Z"/>
+                    </svg>
+                    <span>CSV (.csv)</span>
+                  </button>
+                  <button type="button" class="btn-secondary" id="btn-export-catalog-json" title="Export catalog as structured JSON">
+                    <svg viewBox="0 0 16 16" fill="currentColor" class="btn-icon-svg">
+                      <path d="M2.75 1.5a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25H2.75ZM1 1.75C1 .784 1.784 0 2.75 0h10.5C14.216 0 15 .784 15 1.75v12.5A1.75 1.75 0 0 1 13.25 16H2.75A1.75 1.75 0 0 1 1 14.25V1.75Z"/>
+                    </svg>
+                    <span>JSON (.json)</span>
+                  </button>
+                </div>
+                <p class="settings__hint">Download your repository catalog with languages, stars, folders, tags, and AI summaries.</p>
+              </div>
+            `
+          }
+
+          <!-- Backup & Restore Configuration -->
+          ${
+            forceOpen
+              ? ''
+              : `
+              <div class="form-group settings__backup-group">
+                <label>Backup & Restore Organization</label>
+                <div class="settings__backup-actions">
+                  <button type="button" class="btn-secondary" id="btn-export-config" title="Download backup of custom folders, pinned repos, and starred topics">
+                    <svg viewBox="0 0 16 16" fill="currentColor" class="btn-icon-svg">
+                      <path d="M.5 9.9a.75.75 0 0 1 .75.75v2.5c0 .138.112.25.25.25h13a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 14.5 15h-13A1.75 1.75 0 0 1 0 13.15v-2.5a.75.75 0 0 1 .75-.75Z"/>
+                      <path d="M7.47 10.53a.75.75 0 0 0 1.06 0l3-3a.75.75 0 0 0-1.06-1.06L8.75 8.19V1.75a.75.75 0 0 0-1.5 0v6.44L5.53 6.47a.75.75 0 0 0-1.06 1.06l3 3Z"/>
+                    </svg>
+                    <span>Export Configuration (.json)</span>
+                  </button>
+                  <label class="btn-secondary btn-file-label" title="Import folders and pins from backup file">
+                    <svg viewBox="0 0 16 16" fill="currentColor" class="btn-icon-svg">
+                      <path d="M.5 9.9a.75.75 0 0 1 .75.75v2.5c0 .138.112.25.25.25h13a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 14.5 15h-13A1.75 1.75 0 0 1 0 13.15v-2.5a.75.75 0 0 1 .75-.75Z"/>
+                      <path d="M7.47 1.47a.75.75 0 0 1 1.06 0l3 3a.75.75 0 0 1-1.06 1.06L8.75 3.81v6.44a.75.75 0 0 1-1.5 0V3.81L5.53 5.53a.75.75 0 0 1-1.06-1.06l3-3Z"/>
+                    </svg>
+                    <span>Import Configuration</span>
+                    <input type="file" id="input-import-config" accept=".json,application/json" hidden />
+                  </label>
+                </div>
+                <p class="settings__hint">Safely export or restore custom folders, colors, repository assignments, and pinned repositories.</p>
+              </div>
+            `
+          }
+
           <div class="settings__actions">
             <button type="submit" class="btn-primary" id="btn-save-settings">
               ${forceOpen ? 'Connect & Load Dashboard' : 'Save Changes'}
@@ -160,10 +260,10 @@ export function renderSettingsPanel(container, { settings, onSaved, forceOpen })
     </div>
   `;
 
-  wireUpForm(container, settings, onSaved, forceOpen);
+  wireUpForm(container, settings, onSaved, forceOpen, onExportCatalog);
 }
 
-function wireUpForm(container, settings, onSaved, forceOpen) {
+function wireUpForm(container, settings, onSaved, forceOpen, onExportCatalog) {
   const backdrop = container.querySelector('[data-role="backdrop"]');
   const toggleButton = container.querySelector('.settings__toggle');
   const closeButton = container.querySelector('.modal__close');
@@ -277,6 +377,8 @@ function wireUpForm(container, settings, onSaved, forceOpen) {
       }
     }
 
+    const intervalVal = parseInt(formData.get('autoRefreshInterval') ?? '10', 10);
+
     const saveBtn = form.querySelector('#btn-save-settings');
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
@@ -285,11 +387,127 @@ function wireUpForm(container, settings, onSaved, forceOpen) {
       githubToken: tokenVal,
       aiProvider,
       aiApiKeys,
+      autoRefreshInterval: isNaN(intervalVal) ? 10 : intervalVal,
     });
 
     closeModal();
     onSaved();
   });
+
+  // Live Rate Limit Status in Settings
+  const rateLimitRemainingEl = container.querySelector('#rate-limit-remaining-val');
+  const rateLimitFillEl = container.querySelector('#rate-limit-fill');
+  const rateLimitResetEl = container.querySelector('#rate-limit-reset-val');
+
+  function updateRateLimitUi(rl) {
+    if (!rateLimitRemainingEl || !rl) return;
+    const remaining = rl.remaining ?? 5000;
+    const limit = rl.limit ?? 5000;
+    const pct = Math.max(0, Math.min(100, Math.round((remaining / limit) * 100)));
+    rateLimitRemainingEl.textContent = `${remaining.toLocaleString()} / ${limit.toLocaleString()} remaining`;
+    if (rateLimitFillEl) {
+      rateLimitFillEl.style.width = `${pct}%`;
+      if (pct < 15) {
+        rateLimitFillEl.style.backgroundColor = 'var(--apple-red)';
+      } else if (pct < 35) {
+        rateLimitFillEl.style.backgroundColor = '#ff9f0a';
+      } else {
+        rateLimitFillEl.style.backgroundColor = 'var(--apple-blue)';
+      }
+    }
+    if (rateLimitResetEl) {
+      if (rl.resetTime) {
+        const minsLeft = Math.max(0, Math.round((rl.resetTime.getTime() - Date.now()) / 60000));
+        rateLimitResetEl.textContent = minsLeft > 0 ? `Resets in ~${minsLeft} minute${minsLeft === 1 ? '' : 's'}` : 'Resetting shortly';
+      } else {
+        rateLimitResetEl.textContent = 'Quota resets hourly';
+      }
+    }
+  }
+
+  updateRateLimitUi(getRateLimitStatus());
+  onRateLimitChange(updateRateLimitUi);
+
+  // Catalog Export actions (Markdown, CSV, JSON)
+  const exportMdBtn = container.querySelector('#btn-export-catalog-md');
+  const exportCsvBtn = container.querySelector('#btn-export-catalog-csv');
+  const exportJsonBtn = container.querySelector('#btn-export-catalog-json');
+
+  if (exportMdBtn && onExportCatalog) {
+    exportMdBtn.addEventListener('click', async () => {
+      try {
+        await onExportCatalog('markdown');
+        showFeedback(statusEl, '✓ Exported catalog as Markdown table!', 'success');
+      } catch (err) {
+        showFeedback(statusEl, `✕ Export failed: ${escapeHtml(err.message)}`, 'error');
+      }
+    });
+  }
+  if (exportCsvBtn && onExportCatalog) {
+    exportCsvBtn.addEventListener('click', async () => {
+      try {
+        await onExportCatalog('csv');
+        showFeedback(statusEl, '✓ Exported catalog as CSV spreadsheet!', 'success');
+      } catch (err) {
+        showFeedback(statusEl, `✕ Export failed: ${escapeHtml(err.message)}`, 'error');
+      }
+    });
+  }
+  if (exportJsonBtn && onExportCatalog) {
+    exportJsonBtn.addEventListener('click', async () => {
+      try {
+        await onExportCatalog('json');
+        showFeedback(statusEl, '✓ Exported catalog as JSON data!', 'success');
+      } catch (err) {
+        showFeedback(statusEl, `✕ Export failed: ${escapeHtml(err.message)}`, 'error');
+      }
+    });
+  }
+
+  // Backup & Restore: Export configuration
+  const exportBtn = container.querySelector('#btn-export-config');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', async () => {
+      try {
+        const config = await exportConfiguration();
+        const jsonStr = JSON.stringify(config, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `github-dashboard-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showFeedback(statusEl, '✓ Configuration exported successfully!', 'success');
+      } catch (err) {
+        showFeedback(statusEl, `✕ Export failed: ${escapeHtml(err.message)}`, 'error');
+      }
+    });
+  }
+
+  // Backup & Restore: Import configuration
+  const importInput = container.querySelector('#input-import-config');
+  if (importInput) {
+    importInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        await importConfiguration(data);
+        showFeedback(statusEl, '✓ Configuration imported successfully! Reloading…', 'success');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } catch (err) {
+        showFeedback(statusEl, `✕ Import failed: ${escapeHtml(err.message)}`, 'error');
+      } finally {
+        importInput.value = '';
+      }
+    });
+  }
 
   // Clear AI cache
   const clearBtn = container.querySelector('#btn-clear-cache');

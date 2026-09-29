@@ -11,6 +11,8 @@ export function renderControls(container, {
   onGroupByChange,
   onToggleInspector,
   onOpenCommits,
+  onOpenTrending,
+  onToggleSelectMode,
   onRefresh,
 }) {
   let currentViewMode = initialViewMode;
@@ -35,10 +37,22 @@ export function renderControls(container, {
         <button type="button" class="filter-chip" data-filter="fork">Forks</button>
         <button type="button" class="filter-chip" data-filter="untouched">Untouched</button>
         <button type="button" class="filter-chip" data-filter="private">Private</button>
+        <button type="button" class="filter-chip" data-filter="issues">Has Issues</button>
+        <button type="button" class="filter-chip" data-filter="stale">Dormant (&gt;1 yr)</button>
       </div>
     </div>
 
     <div class="controls-bar__right-group">
+      <!-- Tag Filter Dropdown -->
+      <div class="controls-bar__select-wrap" id="wrap-tag-filter" title="Filter repositories by tag" hidden>
+        <select id="repo-tag-filter" aria-label="Filter repositories by tag">
+          <option value="all">All Tags</option>
+        </select>
+        <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
+        </svg>
+      </div>
+
       <!-- macOS View Mode Switcher -->
       <div class="view-switcher" role="group" aria-label="View mode">
         <button type="button" class="view-switcher__btn ${currentViewMode === 'tiles' ? 'view-switcher__btn--active' : ''}" data-view="tiles" title="Floor Tiles View">
@@ -75,6 +89,7 @@ export function renderControls(container, {
           <option value="updated">Recently updated</option>
           <option value="stars">Most stars</option>
           <option value="forks">Most forks</option>
+          <option value="issues">Most open issues</option>
           <option value="name">Name (A–Z)</option>
         </select>
         <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -89,6 +104,26 @@ export function renderControls(container, {
         </svg>
         <span class="controls-bar__btn-label">Recent Commits</span>
         <kbd class="controls-bar__kbd-subtle">C</kbd>
+      </button>
+
+      <!-- Trending Repos Discovery Button -->
+      <button type="button" class="controls-bar__btn controls-bar__btn--trending" id="btn-trending" title="Discover Trending Repositories & why they're trending (T)" aria-label="Discover Trending Repositories">
+        <svg class="icon-trending" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1.5 1.75a.75.75 0 0 0-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 0 0 0-1.5H1.5V1.75Z"/>
+          <path d="M14.03 4.47a.75.75 0 0 0-1.06 0L8.72 8.72 6.53 6.53a.75.75 0 0 0-1.06 0l-3.5 3.5a.75.75 0 1 0 1.06 1.06l2.97-2.97 2.19 2.19a.75.75 0 0 0 1.06 0l4.75-4.75a.75.75 0 0 0 0-1.06Z"/>
+        </svg>
+        <span class="controls-bar__btn-label">Trending</span>
+        <kbd class="controls-bar__kbd-subtle">T</kbd>
+      </button>
+
+      <!-- Multi-Select Mode Toggle -->
+      <button type="button" class="controls-bar__btn" id="btn-toggle-select" title="Toggle Batch Select Mode (M)" aria-label="Toggle Batch Select Mode">
+        <svg viewBox="0 0 16 16" fill="currentColor">
+          <path d="M2.5 3A1.5 1.5 0 0 0 1 4.5v7A1.5 1.5 0 0 0 2.5 13h11a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 13.5 3h-11Zm0 1h11a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-7a.5.5 0 0 1 .5-.5Z"/>
+          <path d="m10.97 6.03-3.72 3.72-1.47-1.47a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l4.25-4.25a.75.75 0 0 0-1.06-1.06Z"/>
+        </svg>
+        <span class="controls-bar__btn-label">Select</span>
+        <kbd class="controls-bar__kbd-subtle">M</kbd>
       </button>
 
       <!-- Inspector Toggle -->
@@ -122,13 +157,41 @@ export function renderControls(container, {
   const viewButtons = container.querySelectorAll('.view-switcher__btn');
   const inspectorBtn = container.querySelector('#btn-toggle-inspector');
   const commitsBtn = container.querySelector('#btn-recent-commits');
+  const trendingBtn = container.querySelector('#btn-trending');
+  const tagFilterWrap = container.querySelector('#wrap-tag-filter');
+  const tagFilterSelect = container.querySelector('#repo-tag-filter');
+
+  let currentSelectedTagId = 'all';
+  let currentRepoTags = {};
+  let currentCustomTags = [];
+
+  tagFilterSelect?.addEventListener('change', () => {
+    currentSelectedTagId = tagFilterSelect.value;
+    applyAndNotify();
+  });
+
+  commitsBtn?.addEventListener('click', () => {
+    if (onOpenCommits) onOpenCommits();
+  });
+
+  trendingBtn?.addEventListener('click', () => {
+    if (onOpenTrending) onOpenTrending();
+  });
 
   function applyAndNotify() {
     const query = searchInput.value.trim().toLowerCase();
     const sortBy = sortSelect.value;
     clearBtn.hidden = !query;
 
-    const filtered = fullRepoList.filter((repo) => matchesFilter(repo, currentFilter, fullRepoList) && matchesQuery(repo, query));
+    const filtered = fullRepoList.filter((repo) => {
+      if (!matchesFilter(repo, currentFilter, fullRepoList)) return false;
+      if (!matchesQuery(repo, query, currentRepoTags[repo.id], currentCustomTags)) return false;
+      if (currentSelectedTagId !== 'all') {
+        const rTags = currentRepoTags[repo.id] || [];
+        if (!rTags.includes(currentSelectedTagId)) return false;
+      }
+      return true;
+    });
     onFilterChange(sortRepos(filtered, sortBy), { groupBy: currentGroupBy, viewMode: currentViewMode });
   }
 
@@ -154,10 +217,56 @@ export function renderControls(container, {
     inspectorBtn?.classList.toggle('controls-bar__btn--active', isOpen);
   }
 
+  const selectBtn = container.querySelector('#btn-toggle-select');
+  selectBtn?.addEventListener('click', () => {
+    if (onToggleSelectMode) onToggleSelectMode();
+  });
+
+  function setSelectModeActive(isActive) {
+    selectBtn?.classList.toggle('controls-bar__btn--active', isActive);
+  }
+
+  function setGroupBy(group) {
+    currentGroupBy = group;
+    groupSelect.value = group;
+    if (onGroupByChange) onGroupByChange(group);
+    applyAndNotify();
+  }
+
+  function setCustomTags(tags, repoTagsMap) {
+    currentCustomTags = tags || [];
+    currentRepoTags = repoTagsMap || {};
+    if (tagFilterWrap && tagFilterSelect) {
+      if (currentCustomTags.length > 0) {
+        tagFilterWrap.hidden = false;
+        const curVal = tagFilterSelect.value;
+        tagFilterSelect.innerHTML = `
+          <option value="all">All Tags</option>
+          ${currentCustomTags.map((t) => `<option value="${escapeHtml(t.id)}">Tag: ${escapeHtml(t.name)}</option>`).join('')}
+        `;
+        tagFilterSelect.value = curVal && currentCustomTags.some((t) => t.id === curVal) ? curVal : 'all';
+        currentSelectedTagId = tagFilterSelect.value;
+      } else {
+        tagFilterWrap.hidden = true;
+        currentSelectedTagId = 'all';
+      }
+    }
+  }
+
+  function setSelectedTag(tagId) {
+    currentSelectedTagId = tagId || 'all';
+    if (tagFilterSelect) tagFilterSelect.value = currentSelectedTagId;
+    applyAndNotify();
+  }
+
   // Exposed methods
   container.setFilter = setFilter;
   container.setViewMode = setViewMode;
+  container.setGroupBy = setGroupBy;
   container.setInspectorOpen = setInspectorOpen;
+  container.setSelectModeActive = setSelectModeActive;
+  container.setCustomTags = setCustomTags;
+  container.setSelectedTag = setSelectedTag;
   container.applyFilter = applyAndNotify;
 
   container.setRepos = (repos) => {
@@ -219,7 +328,18 @@ function matchesFilter(repo, filterBy, allRepos = []) {
   if (filterBy === 'fork') return repo.isFork;
   if (filterBy === 'untouched') return repo.looksUntouched;
   if (filterBy === 'private') return repo.isPrivate;
+  if (filterBy === 'issues') return (repo.openIssues ?? 0) > 0;
+  if (filterBy === 'stale') return isStaleRepo(repo);
   return true; // 'all'
+}
+
+function isStaleRepo(repo) {
+  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  const raw = repo.pushed_at || repo.updatedAt;
+  if (!raw) return false;
+  const pushedTime = new Date(raw).getTime();
+  if (isNaN(pushedTime)) return false;
+  return pushedTime < oneYearAgo;
 }
 
 function isRecentRepo(repo, allRepos = []) {
@@ -240,14 +360,22 @@ function isRecentRepo(repo, allRepos = []) {
   return false;
 }
 
-
-function matchesQuery(repo, query) {
+function matchesQuery(repo, query, rTags = [], allTags = []) {
   if (!query) return true;
-  return (
+  if (
     repo.name.toLowerCase().includes(query) ||
     (repo.description || '').toLowerCase().includes(query) ||
     (repo.language || '').toLowerCase().includes(query)
-  );
+  ) {
+    return true;
+  }
+  if (rTags && rTags.length > 0 && allTags && allTags.length > 0) {
+    const assignedTagNames = allTags
+      .filter((t) => rTags.includes(t.id))
+      .map((t) => t.name.toLowerCase());
+    if (assignedTagNames.some((n) => n.includes(query))) return true;
+  }
+  return false;
 }
 
 function sortRepos(repos, sortBy) {
@@ -267,7 +395,10 @@ function sortRepos(repos, sortBy) {
       const bVal = b.parent?.forksCount != null ? b.parent.forksCount : (b.forksCount ?? 0);
       return bVal - aVal;
     }
-    if (sortBy === 'name') return copy.sort((a, b) => a.name.localeCompare(b.name));
+    if (sortBy === 'issues') {
+      return (b.openIssues ?? 0) - (a.openIssues ?? 0);
+    }
+    if (sortBy === 'name') return a.name.localeCompare(b.name);
     return new Date(b.updatedAt) - new Date(a.updatedAt); // 'updated'
   });
 }
