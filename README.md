@@ -52,20 +52,29 @@ website.
   - **Group by Folder**: Visual section grouping in both Floor Tiles and List views separating custom folders, unfiled pinned repos, and unfiled repositories.
 - **Recently Edited Repos & Live Commits Panel**: Quick-filter your dashboard to recently edited repositories, and pop up an interactive macOS Sheet (`C` key) displaying the latest commits across repositories. Each commit clearly shows the repository it belongs to (with language indicator and one-click repo isolation), author avatar, relative timestamp, short SHA link, verified badge, and live commit search.
 - **In-Extension Trending Discovery & Topic Explorer (`T` key)**: Discover breakout projects, search good repositories by topics, star favorite topics, and sort category-only repositories without leaving the extension:
+  - **Custom Star Range Selector (Min & Max + Presets)**:
+    - Eliminate 80,000+ star monolithic giants (e.g. React, Vue, freeCodeCamp) to discover emerging, high-velocity tools.
+    - Quick-presets: `All Stars`, `50 – 500 ★ (Under the Radar)`, `500 – 2.5k ★ (Rising Stars)`, `1k – 10k ★ (Sweet Spot)`, `2.5k – 25k ★ (High Growth)`.
+    - Custom numeric inputs: Type any `Min ★` and `Max ★` (e.g. `50` to `5,000`) for precise boundary filtering.
+  - **1-Click Native GitHub Account Starring**:
+    - Directly star (`★ Star`) or unstar repositories to your personal GitHub account straight from the discovery cards with instant optimistic feedback and toast notifications.
+  - **In-Discovery Quick README Peek**:
+    - Slide-over preview sheet inside the discovery modal allowing you to inspect full README documentation, setup instructions, and code blocks without leaving the hub or losing scroll position.
+  - **Personalized "For You (Your Stack)" Discovery Tab**:
+    - Analyzes your dashboard catalog to extract your top languages and topics, automatically querying tailored emerging repositories that match your personal tech stack.
   - **Topic Explorer & Starred Topics Hub**:
     - **Topic-Based Search**: Search good GitHub repositories by specific topics (e.g. `ai-agents`, `model-classifier`, `rag`, `fine-tuning`, `rust`, `devtools`).
+    - **Language Matrix & Activity Recency Filters**: Filter topic searches by language (`TypeScript`, `Python`, `Rust`, `Go`, `C++`, etc.) and pushed recency (`Active this week`, `Active this month`, `Active in 6 months`, `Active this year`).
     - **Curated Trending Topics Catalog (60+ Topics)**: Browse curated categories covering AI & Autonomous Agents, Model Classification & Vision, LLMs, GenAI & RAG, DevTools, Systems/Rust, Modern Web, Cybersecurity, and Data Science.
     - **Starred Topics (Favorites Shelf)**: Star (`★`) any topic to save it to your persistent favorites shelf for 1-click access. Quick-button to filter all starred topics at once.
     - **Category-Only Filtering**: Select one or multiple topics simultaneously to isolate repositories belonging exclusively to those categories.
-    - **Category Sorters & Quality Thresholds**:
-      - Sort category-only repositories by **Trending Velocity** (+stars/day in Today, Week, Month timeframes), **Most Stars** (all-time), **Most Forks**, or **Recently Updated**.
-      - Set **Minimum Stars** quality filters (`>100 ★ (Good Repos)`, `>500 ★`, `>1,000 ★`, `>5,000 ★`) to filter out noise.
+    - **Category Sorters**: Sort category-only repositories by **Trending Velocity** (+stars/day in Today, Week, Month timeframes), **Most Stars** (all-time), **Most Forks**, or **Recently Updated**.
     - **Interactive Topic Tag Pivoting**: Click any topic tag on any repository card to instantly filter into that topic.
   - **Trending Feeds (Breakout & Surging)**:
     - Global breakout launches and surging active repositories across GitHub.
     - Flexible timeframes: `Today`, `This Week`, `This Month`.
   - **Why It's Trending Deep-Dive**: Explains why developers are buzzing about each repository using dual-tier analysis (instant star-velocity & momentum heuristics + background LLM synthesis when an AI provider is configured).
-  - **Seamless Actions**: Pin (`📌`) or assign trending repositories directly to custom folders from inside the discovery sheet.
+  - **Seamless Actions**: Pin (`📌`), assign trending repositories directly to custom folders, or copy clone commands from inside the discovery sheet.
 - **10-Minute Seamless Background Auto-Refresh**:
   - Automatically queries GitHub every 10 minutes (`10 * 60 * 1000` ms) in the background, or whenever you click the refresh icon.
   - **Zero UI State Disruption**: Preserves your active search input query, typing focus, active filter pill, folder selection, view mode, selected repository card, and exact scroll positions in both Floor Tiles and List views.

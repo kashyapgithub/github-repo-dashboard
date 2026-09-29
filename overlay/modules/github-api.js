@@ -93,16 +93,32 @@ function updateRateLimitFromHeaders(headers) {
   }
 }
 
-async function githubRequest(path, token, { acceptRaw = false } = {}) {
+async function githubRequest(path, token, { method = 'GET', acceptRaw = false, body = undefined } = {}) {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: acceptRaw ? 'application/vnd.github.raw' : 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  if (method === 'PUT' || method === 'POST' || method === 'PATCH') {
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    } else {
+      headers['Content-Length'] = '0';
+    }
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: acceptRaw ? 'application/vnd.github.raw' : 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
+    method,
+    headers,
+    body: body !== undefined ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
   });
 
   updateRateLimitFromHeaders(response.headers);
+
+  if (response.status === 204) {
+    return true;
+  }
 
   if (!response.ok) {
     throw new Error(describeGithubError(response.status));
@@ -116,6 +132,52 @@ function describeGithubError(status) {
   if (status === 403) return 'GitHub rate limit hit, or the token is missing the "repo" scope.';
   if (status === 404) return 'Not found.';
   return `GitHub API error: ${status}`;
+}
+
+/**
+ * Checks whether the authenticated user has starred a specific repository.
+ * Returns true if starred (204), false if not starred (404), or false on error.
+ */
+export async function checkRepoStarred(owner, repoName, token) {
+  if (!owner || !repoName || !token) return false;
+  try {
+    const res = await fetch(`${API_BASE}/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    updateRateLimitFromHeaders(res.headers);
+    return res.status === 204;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stars a repository on GitHub for the authenticated user.
+ * PUT /user/starred/{owner}/{repo}
+ */
+export async function starRepoOnGithub(owner, repoName, token) {
+  if (!owner || !repoName || !token) throw new Error('Missing owner, repo, or token');
+  await githubRequest(`/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}`, token, {
+    method: 'PUT',
+  });
+  return true;
+}
+
+/**
+ * Unstars a repository on GitHub for the authenticated user.
+ * DELETE /user/starred/{owner}/{repo}
+ */
+export async function unstarRepoOnGithub(owner, repoName, token) {
+  if (!owner || !repoName || !token) throw new Error('Missing owner, repo, or token');
+  await githubRequest(`/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}`, token, {
+    method: 'DELETE',
+  });
+  return true;
 }
 
 /**
@@ -357,13 +419,50 @@ function normalizeCommit(raw, repoInfo) {
 }
 
 /**
+ * Helper to build GitHub search query qualifier for star ranges.
+ * Supports:
+ * - Both min and max: "stars:min..max"
+ * - Only min: "stars:>=min"
+ * - Only max: "stars:floor..max" (or "stars:<=max")
+ */
+export function buildStarsQualifier(starsMin = 0, starsMax = 0, defaultFloor = 0) {
+  const min = Math.max(0, parseInt(starsMin, 10) || 0);
+  const max = Math.max(0, parseInt(starsMax, 10) || 0);
+
+  if (min > 0 && max > 0) {
+    const low = Math.min(min, max);
+    const high = Math.max(min, max);
+    return `stars:${low}..${high}`;
+  } else if (min > 0) {
+    return `stars:>=${min}`;
+  } else if (max > 0) {
+    const floor = defaultFloor > 0 ? defaultFloor : 0;
+    return floor > 0 ? `stars:${floor}..${max}` : `stars:<=${max}`;
+  } else if (defaultFloor > 0) {
+    return `stars:>=${defaultFloor}`;
+  }
+  return '';
+}
+
+/**
  * Fetches trending repositories from GitHub Search API.
  * Supports timeframes (today, week, month), modes (breakout, surging),
- * language, and topic filters.
+ * custom star ranges (e.g. 100..5000), activity recency, language, and topic filters.
  */
 export async function fetchTrendingRepos(
   token,
-  { timeframe = 'week', language = '', topic = '', mode = 'breakout', perPage = 30 } = {}
+  {
+    timeframe = 'week',
+    language = '',
+    topic = '',
+    mode = 'breakout',
+    starsMin = 0,
+    starsMax = 0,
+    minStars = 0,
+    maxStars = 0,
+    activity = 'anytime',
+    perPage = 30,
+  } = {}
 ) {
   let days = 7;
   if (timeframe === 'today') days = 2;
@@ -374,10 +473,18 @@ export async function fetchTrendingRepos(
   let queryParts = [];
   if (mode === 'surging') {
     queryParts.push(`pushed:>${sinceDate}`);
-    queryParts.push(`stars:>250`);
   } else {
     // Default: Breakout launches created recently
     queryParts.push(`created:>${sinceDate}`);
+  }
+
+  // Star range filter (eliminates 80k+ monoliths)
+  const sMin = starsMin || minStars || 0;
+  const sMax = starsMax || maxStars || 0;
+  const defaultFloor = mode === 'surging' ? 250 : 10;
+  const starsQual = buildStarsQualifier(sMin, sMax, defaultFloor);
+  if (starsQual) {
+    queryParts.push(starsQual);
   }
 
   if (language && language !== 'all') {
@@ -386,6 +493,15 @@ export async function fetchTrendingRepos(
 
   if (topic && topic !== 'all') {
     queryParts.push(`topic:${topic.toLowerCase()}`);
+  }
+
+  if (activity && activity !== 'anytime') {
+    let actDays = 7;
+    if (activity === 'month') actDays = 30;
+    else if (activity === '6months') actDays = 180;
+    else if (activity === 'year') actDays = 365;
+    const actSince = new Date(Date.now() - actDays * 86400000).toISOString().split('T')[0];
+    queryParts.push(`pushed:>${actSince}`);
   }
 
   const query = queryParts.join(' ');
@@ -419,6 +535,7 @@ export async function fetchTrendingRepos(
       daysOld,
       starsPerDay,
       cloneUrl: item.clone_url || `https://github.com/${item.full_name}.git`,
+      sshUrl: item.ssh_url || `git@github.com:${item.full_name}.git`,
     };
   });
 }
@@ -430,7 +547,7 @@ export async function fetchTrendingRepos(
  * - 'stars': highest total stars
  * - 'forks': highest forks count
  * - 'updated': most recently updated
- * Also supports minimum star thresholds (e.g. 100, 500, 1000) and language filter.
+ * Supports custom star ranges (e.g. 100..5000), language, and activity filters.
  */
 export async function fetchReposByTopics(
   token,
@@ -439,7 +556,11 @@ export async function fetchReposByTopics(
     sortBy = 'trending',
     timeframe = 'week',
     minStars = 0,
+    maxStars = 0,
+    starsMin = 0,
+    starsMax = 0,
     language = '',
+    activity = 'anytime',
     query = '',
     perPage = 30,
   } = {}
@@ -460,23 +581,29 @@ export async function fetchReposByTopics(
     queryParts.push(query.trim());
   }
 
-  // 3. Timeframe constraint if sorting by trending
-  let days = 7;
-  if (timeframe === 'today') days = 2;
-  else if (timeframe === 'month') days = 30;
-
-  if (sortBy === 'trending') {
+  // 3. Timeframe or activity constraint
+  if (activity && activity !== 'anytime') {
+    let actDays = 7;
+    if (activity === 'month') actDays = 30;
+    else if (activity === '6months') actDays = 180;
+    else if (activity === 'year') actDays = 365;
+    const actSince = new Date(Date.now() - actDays * 86400000).toISOString().split('T')[0];
+    queryParts.push(`pushed:>${actSince}`);
+  } else if (sortBy === 'trending') {
+    let days = 7;
+    if (timeframe === 'today') days = 2;
+    else if (timeframe === 'month') days = 30;
     const sinceDate = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
     queryParts.push(`pushed:>${sinceDate}`);
   }
 
-  // 4. Minimum stars threshold
-  const minStarsNum = Number(minStars) || 0;
-  if (minStarsNum > 0) {
-    queryParts.push(`stars:>=${minStarsNum}`);
-  } else if (sortBy === 'trending') {
-    // Basic quality floor for trending discovery
-    queryParts.push(`stars:>10`);
+  // 4. Custom Star Range (e.g. 100..5000 to exclude 80k monoliths)
+  const sMin = starsMin || minStars || 0;
+  const sMax = starsMax || maxStars || 0;
+  const defaultFloor = sortBy === 'trending' ? 10 : 0;
+  const starsQual = buildStarsQualifier(sMin, sMax, defaultFloor);
+  if (starsQual) {
+    queryParts.push(starsQual);
   }
 
   // 5. Language filter
@@ -484,9 +611,9 @@ export async function fetchReposByTopics(
     queryParts.push(`language:${language.toLowerCase()}`);
   }
 
-  // If queryParts is empty, default to popular AI/ML repos
+  // If queryParts is empty, default to popular AI/ML repos with star ceiling
   if (queryParts.length === 0) {
-    queryParts.push('topic:ai-agents,model-classifier,llm stars:>100');
+    queryParts.push('topic:ai-agents,model-classifier,llm stars:100..15000');
   }
 
   // Determine GitHub sort parameter

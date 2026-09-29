@@ -1,15 +1,23 @@
 // overlay/modules/render/trendingPanel.js
 //
-// In-extension Trending & Topic Discovery Hub.
-// Allows users to:
-// 1. Discover breakout & surging open-source projects across GitHub.
-// 2. Search & explore good repositories by topics (e.g. AI agents, model classifier, RAG, devtools).
-// 3. Star favorite topics for 1-click access and category-only filtering.
-// 4. Sort category-only repositories by Trending Velocity, Total Stars, Most Forks, or Recently Updated.
-// 5. Understand exactly "Why It's Trending" via deterministic momentum heuristics and AI synthesis.
+// In-extension Trending & Topic Discovery Hub with Precision Controls:
+// 1. Custom Star Range Selector (Min & Max + Presets) to eliminate 80k+ monoliths.
+// 2. 1-Click Native GitHub Account Starring directly from discovery cards.
+// 3. In-Discovery Quick README Peek slide-over modal without losing state.
+// 4. Personalized "For You (Your Stack)" Recommendations Tab.
+// 5. Topic Explorer with Language Matrix & Activity Recency filters.
+// 6. Strict Apple HIG Obsidian styling & zero emojis outside '📌'.
 
 import { escapeHtml, formatNumber, getLanguageColor } from '../format.js';
-import { fetchTrendingRepos, fetchReposByTopics } from '../github-api.js';
+import {
+  fetchTrendingRepos,
+  fetchReposByTopics,
+  checkRepoStarred,
+  starRepoOnGithub,
+  unstarRepoOnGithub,
+  fetchFullReadme,
+} from '../github-api.js';
+import { renderMarkdown } from './markdown.js';
 import { getTrendingWhy, generateHeuristicTrendingWhy } from '../ai/trendingWhy.js';
 import { getStarredTopics, toggleStarredTopic } from '../storage.js';
 import {
@@ -27,13 +35,40 @@ export function renderTrendingPanel(
     aiApiKey,
     folders = [],
     pinnedRepoIds = [],
+    repos = [],
+    userStack = { topLanguages: [], topTopics: [], primaryLanguage: '' },
     onTogglePin,
     onAssignFolder,
     onViewRepo,
   } = {}
 ) {
-  // Current active view mode: 'feed' (Trending Feeds) or 'topics' (Topic Explorer & Starred Topics)
+  // Active navigation tab: 'topics' | 'feed' | 'foryou'
   let activeTab = 'topics';
+
+  // Custom Star Range state
+  let starsPreset = 'all'; // 'all' | 'radar' | 'rising' | 'sweet' | 'growth' | 'custom'
+  let starsMin = 0;
+  let starsMax = 0;
+
+  // Star presets definition
+  const STAR_PRESETS = {
+    all: { min: 0, max: 0, label: 'All Stars' },
+    radar: { min: 50, max: 500, label: '50 – 500 ★' },
+    rising: { min: 500, max: 2500, label: '500 – 2.5k ★' },
+    sweet: { min: 1000, max: 10000, label: '1k – 10k ★' },
+    growth: { min: 2500, max: 25000, label: '2.5k – 25k ★' },
+    custom: { min: 0, max: 5000, label: 'Custom' },
+  };
+
+  // Topics Explorer state
+  let selectedTopics = new Set(['ai-agents', 'model-classifier']);
+  let topicSortBy = 'trending';
+  let topicTimeframe = 'week';
+  let topicLanguage = 'all';
+  let topicActivity = 'anytime';
+  let topicRepos = [];
+  let starredTopics = new Set();
+  let topicCatalogExpanded = false;
 
   // Feed state
   let feedTimeframe = 'week';
@@ -41,14 +76,14 @@ export function renderTrendingPanel(
   let feedFilter = 'all';
   let feedRepos = [];
 
-  // Topics Explorer state
-  let selectedTopics = new Set(['ai-agents', 'model-classifier']);
-  let topicSortBy = 'trending';
-  let topicTimeframe = 'week';
-  let topicMinStars = 100; // Default to >100 stars for "good repos"
-  let topicRepos = [];
-  let starredTopics = new Set();
-  let topicCatalogExpanded = false;
+  // "For You" state
+  let forYouRepos = [];
+  let forYouTimeframe = 'week';
+  let forYouMode = 'breakout';
+  let forYouLanguage = userStack.primaryLanguage ? userStack.primaryLanguage.toLowerCase() : 'all';
+
+  // GitHub starred repos cache (full_name -> boolean)
+  const starredGithubRepos = new Set();
 
   let isPanelOpen = false;
   let isLoading = false;
@@ -69,7 +104,7 @@ export function renderTrendingPanel(
             </div>
             <div>
               <h2 id="trending-modal-title" class="trending-modal__title">Discover & Topic Explorer</h2>
-              <p class="trending-modal__subtitle">Explore breakout projects, search good repos by topics (AI agents, model classifier, etc.), and sort category-only repositories.</p>
+              <p class="trending-modal__subtitle">Surface breakout tools, filter by custom star ranges (e.g. 50–5k ★), and explore curated topics.</p>
             </div>
           </div>
           <button type="button" class="modal__close" id="btn-close-trending" title="Close (Esc or T)" aria-label="Close">✕</button>
@@ -89,9 +124,44 @@ export function renderTrendingPanel(
             </svg>
             <span>Trending Feeds</span>
           </button>
+          <button type="button" class="trending-nav-tab ${activeTab === 'foryou' ? 'trending-nav-tab--active' : ''}" data-tab="foryou">
+            <svg viewBox="0 0 16 16" fill="currentColor" class="tab-icon">
+              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0ZM1.5 8a6.5 6.5 0 1 1 13 0 6.5 6.5 0 0 1-13 0Zm6.28-4.22a.75.75 0 0 0-1.06 1.06L8.94 7H4.75a.75.75 0 0 0 0 1.5h4.19l-2.22 2.16a.75.75 0 1 0 1.06 1.06l3.5-3.41a.75.75 0 0 0 0-1.09l-3.5-3.44Z"/>
+            </svg>
+            <span>For You (Your Stack)</span>
+            ${userStack.primaryLanguage ? `<span class="nav-stack-badge">${escapeHtml(userStack.primaryLanguage)}</span>` : ''}
+          </button>
         </nav>
 
-        <!-- Topic Explorer Toolbar Container -->
+        <!-- Custom Star Range Selector Bar (Universal across Discovery) -->
+        <div class="star-range-bar" id="star-range-bar">
+          <div class="star-range-label">
+            <span class="star-glyph">★</span>
+            <span>Star Range:</span>
+          </div>
+
+          <div class="star-range-presets" role="group" aria-label="Star Range Presets">
+            <button type="button" class="star-range-preset ${starsPreset === 'all' ? 'is-active' : ''}" data-star-preset="all">All Stars</button>
+            <button type="button" class="star-range-preset ${starsPreset === 'radar' ? 'is-active' : ''}" data-star-preset="radar" title="Under the radar gems: 50 to 500 stars">50 – 500 ★</button>
+            <button type="button" class="star-range-preset ${starsPreset === 'rising' ? 'is-active' : ''}" data-star-preset="rising" title="Rising breakout tools: 500 to 2,500 stars">500 – 2.5k ★</button>
+            <button type="button" class="star-range-preset ${starsPreset === 'sweet' ? 'is-active' : ''}" data-star-preset="sweet" title="Sweet spot: 1,000 to 10,000 stars">1k – 10k ★</button>
+            <button type="button" class="star-range-preset ${starsPreset === 'growth' ? 'is-active' : ''}" data-star-preset="growth" title="High growth projects: 2,500 to 25,000 stars">2.5k – 25k ★</button>
+            <button type="button" class="star-range-preset ${starsPreset === 'custom' ? 'is-active' : ''}" data-star-preset="custom">Custom Range</button>
+          </div>
+
+          <div class="star-range-custom-wrap ${starsPreset === 'custom' ? 'is-visible' : ''}" id="star-range-custom-wrap">
+            <div class="star-range-inputs">
+              <span class="star-range-prefix">Min:</span>
+              <input type="number" id="input-star-min" class="star-range-input" min="0" max="1000000" placeholder="0" value="${starsMin > 0 ? starsMin : ''}" />
+              <span class="star-range-to">to</span>
+              <span class="star-range-prefix">Max:</span>
+              <input type="number" id="input-star-max" class="star-range-input" min="0" max="1000000" placeholder="Max" value="${starsMax > 0 ? starsMax : ''}" />
+              <button type="button" class="btn-apply-star-range" id="btn-apply-star-range">Apply</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 1: Topic Explorer & Starred Topics -->
         <div class="topic-explorer-section ${activeTab === 'topics' ? '' : 'is-hidden'}" id="topic-explorer-section">
           <!-- Starred Topics Shelf -->
           <div class="starred-topics-bar">
@@ -118,13 +188,52 @@ export function renderTrendingPanel(
               <button type="button" class="btn-add-custom-topic" id="btn-add-topic" title="Add topic to active filter">+ Add Topic</button>
             </div>
 
+            <!-- Language Matrix Filter -->
+            <div class="topic-select-group">
+              <span class="topic-select-label">Language:</span>
+              <div class="trending-select-wrap">
+                <select id="topic-lang-select" aria-label="Filter by primary language">
+                  <option value="all" selected>All Languages</option>
+                  <option value="typescript">TypeScript</option>
+                  <option value="python">Python</option>
+                  <option value="rust">Rust</option>
+                  <option value="go">Go</option>
+                  <option value="javascript">JavaScript</option>
+                  <option value="cpp">C++</option>
+                  <option value="swift">Swift</option>
+                  <option value="kotlin">Kotlin</option>
+                  <option value="zig">Zig</option>
+                </select>
+                <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
+                </svg>
+              </div>
+            </div>
+
+            <!-- Activity Recency Filter -->
+            <div class="topic-select-group">
+              <span class="topic-select-label">Activity:</span>
+              <div class="trending-select-wrap">
+                <select id="topic-activity-select" aria-label="Filter by recent commit activity">
+                  <option value="anytime" selected>Anytime</option>
+                  <option value="week">Active this week</option>
+                  <option value="month">Active this month</option>
+                  <option value="6months">Active in 6 months</option>
+                  <option value="year">Active this year</option>
+                </select>
+                <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
+                </svg>
+              </div>
+            </div>
+
             <!-- Sort By Selector -->
             <div class="topic-select-group">
               <span class="topic-select-label">Sort:</span>
               <div class="trending-select-wrap">
                 <select id="topic-sort-select" aria-label="Sort topic repositories by">
                   <option value="trending" selected>Trending Velocity (+stars/day)</option>
-                  <option value="stars">Most Stars (All-Time)</option>
+                  <option value="stars">Most Stars</option>
                   <option value="forks">Most Forks</option>
                   <option value="updated">Recently Updated</option>
                 </select>
@@ -140,23 +249,6 @@ export function renderTrendingPanel(
                 <button type="button" class="trending-segment ${topicTimeframe === 'today' ? 'trending-segment--active' : ''}" data-topic-timeframe="today">Today</button>
                 <button type="button" class="trending-segment ${topicTimeframe === 'week' ? 'trending-segment--active' : ''}" data-topic-timeframe="week">Week</button>
                 <button type="button" class="trending-segment ${topicTimeframe === 'month' ? 'trending-segment--active' : ''}" data-topic-timeframe="month">Month</button>
-              </div>
-            </div>
-
-            <!-- Quality Threshold: Min Stars -->
-            <div class="topic-select-group">
-              <span class="topic-select-label">Quality:</span>
-              <div class="trending-select-wrap">
-                <select id="topic-minstars-select" aria-label="Minimum stars threshold">
-                  <option value="0">Any Stars</option>
-                  <option value="100" selected>&gt;100 ★ (Good Repos)</option>
-                  <option value="500">&gt;500 ★</option>
-                  <option value="1000">&gt;1,000 ★ (Popular)</option>
-                  <option value="5000">&gt;5,000 ★ (Top Tier)</option>
-                </select>
-                <svg class="select-chevron" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="m4.427 6.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 6H4.604a.25.25 0 0 0-.177.427Z"/>
-                </svg>
               </div>
             </div>
 
@@ -188,7 +280,7 @@ export function renderTrendingPanel(
           </div>
         </div>
 
-        <!-- Global Trending Feeds Toolbar -->
+        <!-- Section 2: Global Trending Feeds Toolbar -->
         <div class="trending-toolbar ${activeTab === 'feed' ? '' : 'is-hidden'}" id="trending-feed-toolbar">
           <div class="trending-toolbar__row">
             <div class="trending-search-wrap">
@@ -228,6 +320,46 @@ export function renderTrendingPanel(
           </div>
         </div>
 
+        <!-- Section 3: "For You (Your Stack)" Personalized Section -->
+        <div class="foryou-section ${activeTab === 'foryou' ? '' : 'is-hidden'}" id="foryou-section">
+          <div class="foryou-banner">
+            <div class="foryou-banner__left">
+              <span class="foryou-tag">Personalized Stack</span>
+              <h3 class="foryou-title">Emerging Repositories Matching Your Personal Stack</h3>
+              <p class="foryou-subtitle">
+                Tailored recommendations based on your primary languages:
+                <strong>${escapeHtml((userStack.topLanguages || []).slice(0, 4).join(', ') || 'Your Projects')}</strong>
+              </p>
+            </div>
+
+            <div class="foryou-controls">
+              <div class="trending-segmented" role="group" aria-label="For You Discovery Mode">
+                <button type="button" class="trending-segment ${forYouMode === 'breakout' ? 'trending-segment--active' : ''}" data-foryou-mode="breakout">Breakout</button>
+                <button type="button" class="trending-segment ${forYouMode === 'surging' ? 'trending-segment--active' : ''}" data-foryou-mode="surging">Surging</button>
+              </div>
+
+              <div class="trending-segmented" role="group" aria-label="For You Timeframe">
+                <button type="button" class="trending-segment ${forYouTimeframe === 'today' ? 'trending-segment--active' : ''}" data-foryou-timeframe="today">Today</button>
+                <button type="button" class="trending-segment ${forYouTimeframe === 'week' ? 'trending-segment--active' : ''}" data-foryou-timeframe="week">Week</button>
+                <button type="button" class="trending-segment ${forYouTimeframe === 'month' ? 'trending-segment--active' : ''}" data-foryou-timeframe="month">Month</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stack Language Pills -->
+          <div class="foryou-stack-chips">
+            <span class="foryou-stack-label">Focus Language:</span>
+            <button type="button" class="filter-chip ${forYouLanguage === 'all' ? 'filter-chip--active' : ''}" data-foryou-lang="all">All Stack</button>
+            ${(userStack.topLanguages || [])
+              .slice(0, 6)
+              .map(
+                (lang) =>
+                  `<button type="button" class="filter-chip ${forYouLanguage === lang.toLowerCase() ? 'filter-chip--active' : ''}" data-foryou-lang="${escapeHtml(lang.toLowerCase())}">${escapeHtml(lang)}</button>`
+              )
+              .join('')}
+          </div>
+        </div>
+
         <!-- Result Summary Bar -->
         <div class="trending-summary-bar" id="trending-summary-bar">
           <span class="summary-text" id="summary-text">Ready to explore.</span>
@@ -241,6 +373,40 @@ export function renderTrendingPanel(
             <p>Loading repositories…</p>
           </div>
         </div>
+
+        <!-- In-Discovery Quick README Peek Slide-Over Sheet -->
+        <aside class="trending-readme-peek" id="trending-readme-peek" aria-hidden="true">
+          <div class="trending-readme-peek__header">
+            <div class="trending-readme-peek__title-wrap">
+              <span class="trending-readme-peek__badge">Quick README Peek</span>
+              <h3 class="trending-readme-peek__title" id="peek-repo-title">Loading…</h3>
+              <div class="trending-readme-peek__meta" id="peek-repo-meta"></div>
+            </div>
+            <div class="trending-readme-peek__actions">
+              <button type="button" class="trending-action-btn trending-action-btn--star" id="peek-btn-star" title="Star on GitHub">
+                <span class="star-glyph">★</span>
+                <span class="star-text">Star</span>
+              </button>
+              <a href="#" target="_blank" rel="noopener" class="trending-action-btn trending-action-btn--primary" id="peek-link-github" title="Open on GitHub">
+                <span>GitHub</span>
+                <svg viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.75.75a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0V3.56l-4.22 4.22a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L13.44 2.5H10.5a.75.75 0 0 1-.75-.75Z"/>
+                </svg>
+              </a>
+              <button type="button" class="trending-readme-peek__close" id="btn-close-peek" title="Close README preview">✕</button>
+            </div>
+          </div>
+          <div class="trending-readme-peek__body" id="peek-body">
+            <div class="trending-loading">
+              <div class="loading-spinner"></div>
+              <p>Fetching documentation…</p>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Floating Toast Notification within Discovery Hub -->
+        <div class="trending-toast" id="trending-toast" aria-live="polite"></div>
+
       </div>
     </div>
   `;
@@ -251,9 +417,18 @@ export function renderTrendingPanel(
   const navTabs = container.querySelectorAll('.trending-nav-tab');
   const topicExplorerSection = container.querySelector('#topic-explorer-section');
   const feedToolbar = container.querySelector('#trending-feed-toolbar');
+  const forYouSection = container.querySelector('#foryou-section');
   const summaryText = container.querySelector('#summary-text');
   const summaryMeta = container.querySelector('#summary-meta');
   const contentArea = container.querySelector('#trending-content');
+  const discoveryToast = container.querySelector('#trending-toast');
+
+  // Star range elements
+  const starPresetBtns = container.querySelectorAll('[data-star-preset]');
+  const starRangeCustomWrap = container.querySelector('#star-range-custom-wrap');
+  const inputStarMin = container.querySelector('#input-star-min');
+  const inputStarMax = container.querySelector('#input-star-max');
+  const btnApplyStarRange = container.querySelector('#btn-apply-star-range');
 
   // Starred shelf & catalog
   const starredListEl = container.querySelector('#starred-topics-list');
@@ -268,8 +443,9 @@ export function renderTrendingPanel(
   // Topic search & controls
   const topicSearchInput = container.querySelector('#topic-search-input');
   const btnAddTopic = container.querySelector('#btn-add-topic');
+  const topicLangSelect = container.querySelector('#topic-lang-select');
+  const topicActivitySelect = container.querySelector('#topic-activity-select');
   const topicSortSelect = container.querySelector('#topic-sort-select');
-  const topicMinStarsSelect = container.querySelector('#topic-minstars-select');
   const topicTimeframeWrap = container.querySelector('#topic-timeframe-wrap');
   const topicTimeframeBtns = container.querySelectorAll('[data-topic-timeframe]');
 
@@ -281,6 +457,21 @@ export function renderTrendingPanel(
   const feedModeBtns = container.querySelectorAll('[data-feed-mode]');
   const feedTopicChips = container.querySelectorAll('[data-feed-topic]');
 
+  // For You controls
+  const forYouModeBtns = container.querySelectorAll('[data-foryou-mode]');
+  const forYouTimeframeBtns = container.querySelectorAll('[data-foryou-timeframe]');
+  const forYouLangChips = container.querySelectorAll('[data-foryou-lang]');
+
+  // Peek README drawer elements
+  const peekDrawer = container.querySelector('#trending-readme-peek');
+  const btnClosePeek = container.querySelector('#btn-close-peek');
+  const peekRepoTitle = container.querySelector('#peek-repo-title');
+  const peekRepoMeta = container.querySelector('#peek-repo-meta');
+  const peekBody = container.querySelector('#peek-body');
+  const peekBtnStar = container.querySelector('#peek-btn-star');
+  const peekLinkGithub = container.querySelector('#peek-link-github');
+  let currentPeekRepo = null;
+
   // Initialize starred topics from storage
   getStarredTopics().then((topics) => {
     starredTopics = new Set(topics);
@@ -289,6 +480,23 @@ export function renderTrendingPanel(
     renderActiveTopicsBar();
   });
 
+  // Seed local starred set from loaded repositories that user owns or stars
+  repos.forEach((r) => {
+    if (r.stars > 0 && r.fullName) {
+      // Optional seed
+    }
+  });
+
+  function showToast(message, isSuccess = true) {
+    if (!discoveryToast) return;
+    discoveryToast.textContent = message;
+    discoveryToast.className = `trending-toast trending-toast--visible ${isSuccess ? 'trending-toast--success' : 'trending-toast--info'}`;
+    clearTimeout(discoveryToast._timer);
+    discoveryToast._timer = setTimeout(() => {
+      discoveryToast.classList.remove('trending-toast--visible');
+    }, 2800);
+  }
+
   function open() {
     isPanelOpen = true;
     modalBackdrop.classList.add('modal-backdrop--visible');
@@ -296,12 +504,15 @@ export function renderTrendingPanel(
       loadTopicsRepos();
     } else if (activeTab === 'feed' && feedRepos.length === 0) {
       loadFeed();
+    } else if (activeTab === 'foryou' && forYouRepos.length === 0) {
+      loadForYou();
     }
   }
 
   function close() {
     isPanelOpen = false;
     modalBackdrop.classList.remove('modal-backdrop--visible');
+    closePeekDrawer();
   }
 
   function isOpen() {
@@ -313,7 +524,67 @@ export function renderTrendingPanel(
     if (e.target === modalBackdrop) close();
   });
 
-  // Top Nav Tab switching
+  // =========================================================================
+  // Star Range Presets & Custom Min/Max Controls
+  // =========================================================================
+
+  function applyStarRange(presetKey, customMin, customMax) {
+    starsPreset = presetKey;
+    if (presetKey === 'custom') {
+      starsMin = Math.max(0, parseInt(customMin, 10) || 0);
+      starsMax = Math.max(0, parseInt(customMax, 10) || 0);
+    } else {
+      const p = STAR_PRESETS[presetKey] || STAR_PRESETS.all;
+      starsMin = p.min;
+      starsMax = p.max;
+      inputStarMin.value = starsMin > 0 ? starsMin : '';
+      inputStarMax.value = starsMax > 0 ? starsMax : '';
+    }
+
+    // Update active preset buttons
+    starPresetBtns.forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.starPreset === starsPreset);
+    });
+
+    starRangeCustomWrap.classList.toggle('is-visible', starsPreset === 'custom');
+
+    // Reload active tab
+    if (activeTab === 'topics') loadTopicsRepos();
+    else if (activeTab === 'feed') loadFeed();
+    else if (activeTab === 'foryou') loadForYou();
+  }
+
+  starPresetBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = btn.dataset.starPreset;
+      if (preset === 'custom') {
+        starsPreset = 'custom';
+        starPresetBtns.forEach((b) => b.classList.toggle('is-active', b.dataset.starPreset === 'custom'));
+        starRangeCustomWrap.classList.add('is-visible');
+        inputStarMin.focus();
+      } else {
+        applyStarRange(preset);
+      }
+    });
+  });
+
+  btnApplyStarRange?.addEventListener('click', () => {
+    applyStarRange('custom', inputStarMin.value, inputStarMax.value);
+  });
+
+  [inputStarMin, inputStarMax].forEach((input) => {
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyStarRange('custom', inputStarMin.value, inputStarMax.value);
+      }
+    });
+  });
+
+  // =========================================================================
+  // Navigation Tabs Switching
+  // =========================================================================
+
   navTabs.forEach((tab) => {
     tab.addEventListener('click', () => {
       const target = tab.dataset.tab;
@@ -323,13 +594,17 @@ export function renderTrendingPanel(
 
       topicExplorerSection.classList.toggle('is-hidden', activeTab !== 'topics');
       feedToolbar.classList.toggle('is-hidden', activeTab !== 'feed');
+      forYouSection.classList.toggle('is-hidden', activeTab !== 'foryou');
 
       if (activeTab === 'topics') {
         if (topicRepos.length === 0) loadTopicsRepos();
         else renderTopicResults();
-      } else {
+      } else if (activeTab === 'feed') {
         if (feedRepos.length === 0) loadFeed();
         else renderFeedResults();
+      } else if (activeTab === 'foryou') {
+        if (forYouRepos.length === 0) loadForYou();
+        else renderForYouResults();
       }
     });
   });
@@ -452,15 +727,15 @@ export function renderTrendingPanel(
       .map((slug) => {
         const info = findTopicInfo(slug);
         return `
-          <span class="active-topic-chip">
+          <span class="active-topic-tag">
             <span>${escapeHtml(info.label)}</span>
-            <button type="button" class="btn-remove-active-topic" data-slug="${escapeHtml(slug)}" title="Remove ${escapeHtml(info.label)}">✕</button>
+            <button type="button" class="btn-remove-topic" data-slug="${escapeHtml(slug)}" title="Remove topic filter">✕</button>
           </span>
         `;
       })
       .join('');
 
-    activeTopicsChips.querySelectorAll('.btn-remove-active-topic').forEach((btn) => {
+    activeTopicsChips.querySelectorAll('.btn-remove-topic').forEach((btn) => {
       btn.addEventListener('click', () => {
         selectedTopics.delete(btn.dataset.slug);
         renderActiveTopicsBar();
@@ -479,20 +754,16 @@ export function renderTrendingPanel(
     loadTopicsRepos();
   });
 
-  // Toggle Curated Catalog
   btnToggleCatalog?.addEventListener('click', () => {
     topicCatalogExpanded = !topicCatalogExpanded;
     curatedCatalogPanel.classList.toggle('is-expanded', topicCatalogExpanded);
-    btnToggleCatalog.classList.toggle('is-active', topicCatalogExpanded);
   });
 
   btnCloseCatalog?.addEventListener('click', () => {
     topicCatalogExpanded = false;
     curatedCatalogPanel.classList.remove('is-expanded');
-    btnToggleCatalog.classList.remove('is-active');
   });
 
-  // Custom Topic Search & Add
   function handleAddTopicInput() {
     const raw = topicSearchInput.value.trim();
     if (!raw) return;
@@ -523,6 +794,16 @@ export function renderTrendingPanel(
     loadTopicsRepos();
   });
 
+  topicLangSelect?.addEventListener('change', () => {
+    topicLanguage = topicLangSelect.value;
+    loadTopicsRepos();
+  });
+
+  topicActivitySelect?.addEventListener('change', () => {
+    topicActivity = topicActivitySelect.value;
+    loadTopicsRepos();
+  });
+
   topicTimeframeBtns?.forEach((btn) => {
     btn.addEventListener('click', () => {
       topicTimeframeBtns.forEach((b) => b.classList.remove('trending-segment--active'));
@@ -532,10 +813,12 @@ export function renderTrendingPanel(
     });
   });
 
-  topicMinStarsSelect?.addEventListener('change', () => {
-    topicMinStars = Number(topicMinStarsSelect.value) || 0;
-    loadTopicsRepos();
-  });
+  function getActiveStarRangeDescription() {
+    if (starsMin > 0 && starsMax > 0) return `${formatNumber(starsMin)} – ${formatNumber(starsMax)} ★`;
+    if (starsMin > 0) return `≥ ${formatNumber(starsMin)} ★`;
+    if (starsMax > 0) return `≤ ${formatNumber(starsMax)} ★`;
+    return 'All Stars';
+  }
 
   async function loadTopicsRepos() {
     if (!token) {
@@ -558,15 +841,18 @@ export function renderTrendingPanel(
 
     isLoading = true;
     renderSkeletonLoading();
-    summaryText.textContent = `Searching GitHub for good repositories matching: ${topicsArr.join(', ')}…`;
-    summaryMeta.textContent = `Sort: ${topicSortBy === 'trending' ? 'Trending Velocity' : topicSortBy} | Min Stars: ${topicMinStars}`;
+    summaryText.textContent = `Searching GitHub for repositories matching: ${topicsArr.join(', ')}…`;
+    summaryMeta.textContent = `Range: ${getActiveStarRangeDescription()} • Lang: ${topicLanguage} • Activity: ${topicActivity}`;
 
     try {
       topicRepos = await fetchReposByTopics(token, {
         topics: topicsArr,
         sortBy: topicSortBy,
         timeframe: topicTimeframe,
-        minStars: topicMinStars,
+        starsMin,
+        starsMax,
+        language: topicLanguage,
+        activity: topicActivity,
         perPage: 30,
       });
 
@@ -593,13 +879,13 @@ export function renderTrendingPanel(
     const count = topicRepos.length;
 
     summaryText.innerHTML = `Showing <strong>${count}</strong> repositories in <em>${escapeHtml(topicsArr.join(', '))}</em>`;
-    summaryMeta.textContent = `Sorted by ${topicSortBy === 'trending' ? `Trending Velocity (${topicTimeframe})` : topicSortBy} • Min Stars: ${topicMinStars}`;
+    summaryMeta.textContent = `Range: ${getActiveStarRangeDescription()} • Sorted by ${topicSortBy === 'trending' ? `Velocity (${topicTimeframe})` : topicSortBy}`;
 
     if (count === 0) {
       contentArea.innerHTML = `
         <div class="trending-empty">
-          <p class="trending-empty__title">No repositories found matching criteria</p>
-          <p class="trending-empty__desc">Try lowering the minimum star threshold, adjusting the timeframe, or adding related topics.</p>
+          <p class="trending-empty__title">No repositories found in this star range</p>
+          <p class="trending-empty__desc">Try broadening your star range (${getActiveStarRangeDescription()}) or clearing language/activity filters.</p>
         </div>
       `;
       return;
@@ -673,7 +959,7 @@ export function renderTrendingPanel(
     renderSkeletonLoading();
 
     summaryText.textContent = `Scanning GitHub for ${feedMode} repositories (${feedTimeframe})…`;
-    summaryMeta.textContent = '';
+    summaryMeta.textContent = `Star Range: ${getActiveStarRangeDescription()}`;
 
     let langArg = '';
     let topicArg = '';
@@ -689,6 +975,8 @@ export function renderTrendingPanel(
         mode: feedMode,
         language: langArg,
         topic: topicArg,
+        starsMin,
+        starsMax,
         perPage: 30,
       });
 
@@ -724,13 +1012,13 @@ export function renderTrendingPanel(
     });
 
     summaryText.innerHTML = `Found <strong>${filtered.length}</strong> trending projects`;
-    summaryMeta.textContent = `${feedMode === 'breakout' ? 'Breakout Launches' : 'Surging & Active'} • ${feedTimeframe}`;
+    summaryMeta.textContent = `${feedMode === 'breakout' ? 'Breakout Launches' : 'Surging & Active'} • Range: ${getActiveStarRangeDescription()} • ${feedTimeframe}`;
 
     if (filtered.length === 0) {
       contentArea.innerHTML = `
         <div class="trending-empty">
           <p class="trending-empty__title">No trending repositories found</p>
-          <p class="trending-empty__desc">Try switching timeframes, changing topics, or clearing your search query.</p>
+          <p class="trending-empty__desc">Try adjusting your star range (${getActiveStarRangeDescription()}) or clearing search filters.</p>
         </div>
       `;
       return;
@@ -739,6 +1027,100 @@ export function renderTrendingPanel(
     contentArea.innerHTML = `
       <div class="trending-grid">
         ${filtered.map((repo) => renderRepoCardHtml(repo)).join('')}
+      </div>
+    `;
+
+    wireCardActions(contentArea);
+  }
+
+  // =========================================================================
+  // Section 3: "For You (Your Stack)" Logic
+  // =========================================================================
+
+  forYouModeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      forYouModeBtns.forEach((b) => b.classList.remove('trending-segment--active'));
+      btn.classList.add('trending-segment--active');
+      forYouMode = btn.dataset.foryouMode;
+      loadForYou();
+    });
+  });
+
+  forYouTimeframeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      forYouTimeframeBtns.forEach((b) => b.classList.remove('trending-segment--active'));
+      btn.classList.add('trending-segment--active');
+      forYouTimeframe = btn.dataset.foryouTimeframe;
+      loadForYou();
+    });
+  });
+
+  forYouLangChips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      forYouLangChips.forEach((c) => c.classList.remove('filter-chip--active'));
+      chip.classList.add('filter-chip--active');
+      forYouLanguage = chip.dataset.foryouLang;
+      loadForYou();
+    });
+  });
+
+  async function loadForYou() {
+    if (!token) {
+      renderTokenRequired();
+      return;
+    }
+
+    isLoading = true;
+    renderSkeletonLoading();
+
+    const targetLang = forYouLanguage !== 'all' ? forYouLanguage : userStack.primaryLanguage?.toLowerCase() || '';
+    summaryText.textContent = `Finding emerging tools for your stack (${targetLang || 'top languages'})…`;
+    summaryMeta.textContent = `Star Range: ${getActiveStarRangeDescription()} • Mode: ${forYouMode}`;
+
+    try {
+      forYouRepos = await fetchTrendingRepos(token, {
+        timeframe: forYouTimeframe,
+        mode: forYouMode,
+        language: targetLang,
+        starsMin,
+        starsMax,
+        perPage: 30,
+      });
+
+      isLoading = false;
+      renderForYouResults();
+      enrichWithWhyAnalysis(forYouRepos);
+    } catch (err) {
+      isLoading = false;
+      contentArea.innerHTML = `
+        <div class="trending-error">
+          <p class="trending-error__title">Failed to load personalized recommendations</p>
+          <p class="trending-error__desc">${escapeHtml(err.message)}</p>
+          <button type="button" class="btn-primary btn-retry-trending" id="btn-retry-foryou">Try Again</button>
+        </div>
+      `;
+      contentArea.querySelector('#btn-retry-foryou')?.addEventListener('click', loadForYou);
+    }
+  }
+
+  function renderForYouResults() {
+    const count = forYouRepos.length;
+    summaryText.innerHTML = `Showing <strong>${count}</strong> personalized tools for your stack`;
+    summaryMeta.textContent = `Range: ${getActiveStarRangeDescription()} • ${forYouMode === 'breakout' ? 'Breakout' : 'Surging'} • ${forYouTimeframe}`;
+
+    if (count === 0) {
+      contentArea.innerHTML = `
+        <div class="trending-empty">
+          <p class="trending-empty__title">No recommendations found in this star range</p>
+          <p class="trending-empty__desc">Try switching star range (${getActiveStarRangeDescription()}) or selecting "All Stack".</p>
+        </div>
+      `;
+      return;
+    }
+
+    contentArea.innerHTML = `
+      <div class="trending-grid">
+        ${forYouRepos.map((repo) => renderRepoCardHtml(repo)).join('')}
       </div>
     `;
 
@@ -757,12 +1139,109 @@ export function renderTrendingPanel(
   }
 
   // =========================================================================
+  // Quick README Peek Slide-Over Logic
+  // =========================================================================
+
+  function closePeekDrawer() {
+    if (!peekDrawer) return;
+    peekDrawer.classList.remove('is-open');
+    peekDrawer.setAttribute('aria-hidden', 'true');
+    currentPeekRepo = null;
+  }
+
+  btnClosePeek?.addEventListener('click', closePeekDrawer);
+
+  async function openReadmePeek(owner, repoName, fallbackRepo = null) {
+    if (!peekDrawer) return;
+    currentPeekRepo = { owner, repoName, ...fallbackRepo };
+    peekDrawer.classList.add('is-open');
+    peekDrawer.setAttribute('aria-hidden', 'false');
+
+    peekRepoTitle.textContent = `${owner}/${repoName}`;
+    peekRepoMeta.textContent = fallbackRepo?.language ? `${fallbackRepo.language} • ${fallbackRepo.stars?.toLocaleString() || 0} ★` : '';
+    peekLinkGithub.href = fallbackRepo?.url || `https://github.com/${owner}/${repoName}`;
+
+    // Update peek star button state
+    const isStarred = starredGithubRepos.has(`${owner}/${repoName}`.toLowerCase());
+    peekBtnStar.classList.toggle('is-starred', isStarred);
+    peekBtnStar.querySelector('.star-text').textContent = isStarred ? 'Starred' : 'Star';
+
+    peekBody.innerHTML = `
+      <div class="trending-loading">
+        <div class="loading-spinner"></div>
+        <p>Fetching full README documentation for ${escapeHtml(repoName)}…</p>
+      </div>
+    `;
+
+    try {
+      const readmeText = await fetchFullReadme(owner, repoName, token);
+      if (!readmeText || !readmeText.trim()) {
+        peekBody.innerHTML = `
+          <div class="md-empty">
+            <p>This repository has not published a README document.</p>
+          </div>
+        `;
+      } else {
+        const renderedHtml = renderMarkdown(readmeText, {
+          repoFullName: `${owner}/${repoName}`,
+          defaultBranch: 'main',
+        });
+        peekBody.innerHTML = `<article class="readme-view">${renderedHtml}</article>`;
+      }
+    } catch (err) {
+      peekBody.innerHTML = `
+        <div class="trending-error">
+          <p class="trending-error__title">Unable to load README</p>
+          <p class="trending-error__desc">${escapeHtml(err.message)}</p>
+        </div>
+      `;
+    }
+  }
+
+  peekBtnStar?.addEventListener('click', async () => {
+    if (!currentPeekRepo || !token) return;
+    const { owner, repoName } = currentPeekRepo;
+    const key = `${owner}/${repoName}`.toLowerCase();
+    const isNowStarred = !starredGithubRepos.has(key);
+
+    if (isNowStarred) starredGithubRepos.add(key);
+    else starredGithubRepos.delete(key);
+
+    peekBtnStar.classList.toggle('is-starred', isNowStarred);
+    peekBtnStar.querySelector('.star-text').textContent = isNowStarred ? 'Starred' : 'Star';
+
+    // Sync card button if visible
+    contentArea.querySelectorAll(`[data-action="github-star"][data-owner="${owner}"][data-repo="${repoName}"]`).forEach((b) => {
+      b.classList.toggle('is-starred', isNowStarred);
+      b.querySelector('.star-text').textContent = isNowStarred ? 'Starred' : 'Star';
+    });
+
+    try {
+      if (isNowStarred) {
+        await starRepoOnGithub(owner, repoName, token);
+        showToast(`✓ Starred ${owner}/${repoName} on GitHub`);
+      } else {
+        await unstarRepoOnGithub(owner, repoName, token);
+        showToast(`Unstarred ${owner}/${repoName}`);
+      }
+    } catch (err) {
+      // Revert on error
+      if (isNowStarred) starredGithubRepos.delete(key);
+      else starredGithubRepos.add(key);
+      peekBtnStar.classList.toggle('is-starred', !isNowStarred);
+      peekBtnStar.querySelector('.star-text').textContent = !isNowStarred ? 'Starred' : 'Star';
+      showToast(`GitHub star failed: ${err.message}`, false);
+    }
+  });
+
+  // =========================================================================
   // Repository Card HTML & Wire Actions
   // =========================================================================
 
   function renderRepoCardHtml(repo) {
     const langColor = repo.language ? getLanguageColor(repo.language) : null;
     const isPinned = pinnedSet.has(repo.id);
+    const isGithubStarred = starredGithubRepos.has(repo.fullName.toLowerCase());
     const initialWhy = repo.whyTrending || generateHeuristicTrendingWhy(repo);
 
     let rankClass = 'trending-rank--other';
@@ -775,8 +1254,8 @@ export function renderTrendingPanel(
         <!-- Top Row -->
         <div class="trending-card__top">
           <div class="trending-card__identity">
-            <span class="trending-rank ${rankClass}" title="Rank #${repo.rank}">
-              <span class="trending-rank__hash">#</span><span class="trending-rank__num">${repo.rank}</span>
+            <span class="trending-rank ${rankClass}" title="Rank #${repo.rank || '-'}">
+              <span class="trending-rank__hash">#</span><span class="trending-rank__num">${repo.rank || '•'}</span>
             </span>
 
             ${
@@ -798,6 +1277,7 @@ export function renderTrendingPanel(
                       </span>`
                     : ''
                 }
+                ${repo.pushedAt ? `<span>Pushed ${escapeHtml(repo.pushedAt.split('T')[0])}</span>` : ''}
               </div>
             </div>
           </div>
@@ -805,11 +1285,11 @@ export function renderTrendingPanel(
           <div class="trending-card__metrics">
             <div class="trending-metric-pill" title="${repo.stars.toLocaleString()} total stars">
               <span class="star-glyph">★</span>
-              <span class="metric-num">${formatNumber(repo.stars)}</span>
+              <span class="metric-num" data-role="star-num">${formatNumber(repo.stars)}</span>
             </div>
             ${
               repo.starsPerDay > 0
-                ? `<div class="trending-velocity-pill" title="Average stars per day since creation">
+                ? `<div class="trending-velocity-pill" title="Average velocity since creation">
                     <span class="velocity-plus">+${formatNumber(repo.starsPerDay)}</span>
                     <span class="velocity-label">/day</span>
                   </div>`
@@ -861,6 +1341,34 @@ export function renderTrendingPanel(
         <!-- Quick Actions Bar -->
         <div class="trending-card__footer">
           <div class="trending-footer-left">
+            <!-- 1-Click Native GitHub Star -->
+            <button
+              type="button"
+              class="trending-action-btn trending-action-btn--star ${isGithubStarred ? 'is-starred' : ''}"
+              data-action="github-star"
+              data-owner="${escapeHtml(repo.owner)}"
+              data-repo="${escapeHtml(repo.name)}"
+              title="${isGithubStarred ? 'Unstar on your GitHub account' : 'Star on your GitHub account'}"
+            >
+              <span class="star-glyph">★</span>
+              <span class="star-text">${isGithubStarred ? 'Starred' : 'Star'}</span>
+            </button>
+
+            <!-- Quick README Peek -->
+            <button
+              type="button"
+              class="trending-action-btn trending-action-btn--peek"
+              data-action="peek-readme"
+              data-owner="${escapeHtml(repo.owner)}"
+              data-repo="${escapeHtml(repo.name)}"
+              title="Inspect repository README without leaving"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor">
+                <path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25V2.75Zm1.75-.25a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25H1.75ZM7.25 4a.75.75 0 0 1 .75.75v6.5a.75.75 0 0 1-1.5 0v-6.5A.75.75 0 0 1 7.25 4Zm3 2a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10.25 6ZM4.25 8a.75.75 0 0 1 .75.75v2.5a.75.75 0 0 1-1.5 0v-2.5A.75.75 0 0 1 4.25 8Z"/>
+              </svg>
+              <span>README</span>
+            </button>
+
             <!-- Pin Button (Keep Pin Icon) -->
             <button
               type="button"
@@ -896,7 +1404,8 @@ export function renderTrendingPanel(
               class="trending-action-btn"
               data-action="clone"
               data-clone-url="${escapeHtml(repo.cloneUrl)}"
-              title="Copy git clone URL"
+              data-full-name="${escapeHtml(repo.fullName)}"
+              title="Copy git clone command"
             >
               <svg viewBox="0 0 16 16" fill="currentColor">
                 <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25v-7.5Z"/>
@@ -919,6 +1428,68 @@ export function renderTrendingPanel(
   }
 
   function wireCardActions(parentEl) {
+    // 1-Click Native GitHub Star
+    parentEl.querySelectorAll('[data-action="github-star"]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!token) {
+          showToast('Please add GitHub token to star repos', false);
+          return;
+        }
+
+        const owner = btn.dataset.owner;
+        const repoName = btn.dataset.repo;
+        const key = `${owner}/${repoName}`.toLowerCase();
+        const isNowStarred = !starredGithubRepos.has(key);
+
+        // Optimistic UI updates
+        if (isNowStarred) starredGithubRepos.add(key);
+        else starredGithubRepos.delete(key);
+
+        btn.classList.toggle('is-starred', isNowStarred);
+        btn.querySelector('.star-text').textContent = isNowStarred ? 'Starred' : 'Star';
+
+        // Optimistic star counter update
+        const card = btn.closest('.trending-card');
+        const starNumEl = card?.querySelector('[data-role="star-num"]');
+        if (starNumEl) {
+          const currentCount = parseInt(starNumEl.textContent.replace(/,/g, ''), 10) || 0;
+          starNumEl.textContent = formatNumber(isNowStarred ? currentCount + 1 : Math.max(0, currentCount - 1));
+        }
+
+        try {
+          if (isNowStarred) {
+            await starRepoOnGithub(owner, repoName, token);
+            showToast(`✓ Starred ${owner}/${repoName} on GitHub`);
+          } else {
+            await unstarRepoOnGithub(owner, repoName, token);
+            showToast(`Unstarred ${owner}/${repoName}`);
+          }
+        } catch (err) {
+          // Revert on error
+          if (isNowStarred) starredGithubRepos.delete(key);
+          else starredGithubRepos.add(key);
+          btn.classList.toggle('is-starred', !isNowStarred);
+          btn.querySelector('.star-text').textContent = !isNowStarred ? 'Starred' : 'Star';
+          showToast(`Starring failed: ${err.message}`, false);
+        }
+      });
+    });
+
+    // In-Discovery Quick README Peek
+    parentEl.querySelectorAll('[data-action="peek-readme"]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const owner = btn.dataset.owner;
+        const repoName = btn.dataset.repo;
+        const targetRepo =
+          topicRepos.find((r) => r.owner === owner && r.name === repoName) ||
+          feedRepos.find((r) => r.owner === owner && r.name === repoName) ||
+          forYouRepos.find((r) => r.owner === owner && r.name === repoName);
+        openReadmePeek(owner, repoName, targetRepo);
+      });
+    });
+
     // Pin buttons
     parentEl.querySelectorAll('[data-action="pin"]').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
@@ -948,6 +1519,7 @@ export function renderTrendingPanel(
           await onAssignFolder(repoId, folderId);
           select.classList.add('is-assigned');
           setTimeout(() => select.classList.remove('is-assigned'), 1500);
+          showToast('Saved to folder');
         }
       });
     });
@@ -965,6 +1537,7 @@ export function renderTrendingPanel(
             span.textContent = 'Copied!';
             setTimeout(() => (span.textContent = oldText), 1500);
           }
+          showToast('Copied git clone command');
         } catch {
           // Fallback
         }
@@ -983,6 +1556,7 @@ export function renderTrendingPanel(
         navTabs.forEach((t) => t.classList.toggle('trending-nav-tab--active', t.dataset.tab === 'topics'));
         topicExplorerSection.classList.remove('is-hidden');
         feedToolbar.classList.add('is-hidden');
+        forYouSection.classList.add('is-hidden');
 
         // Set topic as selected
         selectedTopics = new Set([topicSlug]);

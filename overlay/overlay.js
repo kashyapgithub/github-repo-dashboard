@@ -450,12 +450,47 @@ function runDashboard(shell, repos, settings, uiPrefs, { folders = [], repoFolde
     },
   });
 
+  function computeUserStackProfile(repositoryList) {
+    const langCounts = {};
+    const topicCounts = {};
+
+    for (const repo of repositoryList) {
+      if (repo.language) {
+        langCounts[repo.language] = (langCounts[repo.language] || 0) + 1;
+      }
+      if (Array.isArray(repo.topics)) {
+        for (const t of repo.topics) {
+          const norm = typeof t === 'string' ? t.toLowerCase().trim() : '';
+          if (norm) {
+            topicCounts[norm] = (topicCounts[norm] || 0) + 1;
+          }
+        }
+      }
+    }
+
+    const topLanguages = Object.entries(langCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([lang]) => lang);
+
+    const topTopics = Object.entries(topicCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([t]) => t);
+
+    return {
+      topLanguages,
+      topTopics,
+      primaryLanguage: topLanguages[0] || 'TypeScript',
+    };
+  }
+
   const trendingPanel = renderTrendingPanel(shell.trendingSlot, {
     token: settings.githubToken,
     aiProvider: settings.aiProvider,
     aiApiKey: settings.aiProvider ? settings.aiApiKeys?.[settings.aiProvider] : null,
     folders: currentFolders,
     pinnedRepoIds: repos.filter((r) => r.isPinned).map((r) => r.id),
+    repos,
+    userStack: computeUserStackProfile(repos),
     onTogglePin: handleTogglePin,
     onAssignFolder: handleAssignFolder,
   });
