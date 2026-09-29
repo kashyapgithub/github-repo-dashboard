@@ -1365,6 +1365,10 @@ function setUpKeyboardShortcuts(
         commandPalette.close();
         return;
       }
+      if (trendingPanel?.isPeekOpen?.()) {
+        trendingPanel.closePeekDrawer();
+        return;
+      }
       const modal = document.querySelector('.modal-backdrop--visible');
       if (modal) {
         modal.classList.remove('modal-backdrop--visible');

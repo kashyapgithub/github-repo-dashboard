@@ -1142,6 +1142,10 @@ export function renderTrendingPanel(
   // Quick README Peek Slide-Over Logic
   // =========================================================================
 
+  function isPeekOpen() {
+    return Boolean(peekDrawer?.classList.contains('is-open'));
+  }
+
   function closePeekDrawer() {
     if (!peekDrawer) return;
     peekDrawer.classList.remove('is-open');
@@ -1150,6 +1154,41 @@ export function renderTrendingPanel(
   }
 
   btnClosePeek?.addEventListener('click', closePeekDrawer);
+
+  // Close peek drawer on Escape or when clicking outside it in contentArea
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isPeekOpen()) {
+      e.stopPropagation();
+      e.preventDefault();
+      closePeekDrawer();
+    }
+  });
+
+  contentArea?.addEventListener('click', (e) => {
+    if (isPeekOpen() && !e.target.closest('#trending-readme-peek') && !e.target.closest('[data-action="peek-readme"]')) {
+      closePeekDrawer();
+    }
+  });
+
+  function wireReadmeCodeCopy(slot) {
+    if (!slot) return;
+    slot.querySelectorAll('.md-copy-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const code = btn.closest('.md-code-wrap')?.querySelector('code')?.textContent || '';
+        if (!code) return;
+        try {
+          await navigator.clipboard.writeText(code);
+          const orig = btn.textContent;
+          btn.textContent = '✓ Copied';
+          setTimeout(() => {
+            btn.textContent = orig;
+          }, 1800);
+        } catch {
+          window.prompt('Copy code:', code);
+        }
+      });
+    });
+  }
 
   async function openReadmePeek(owner, repoName, fallbackRepo = null) {
     if (!peekDrawer) return;
@@ -1187,6 +1226,7 @@ export function renderTrendingPanel(
           defaultBranch: 'main',
         });
         peekBody.innerHTML = `<article class="readme-view">${renderedHtml}</article>`;
+        wireReadmeCodeCopy(peekBody);
       }
     } catch (err) {
       peekBody.innerHTML = `
@@ -1210,10 +1250,18 @@ export function renderTrendingPanel(
     peekBtnStar.classList.toggle('is-starred', isNowStarred);
     peekBtnStar.querySelector('.star-text').textContent = isNowStarred ? 'Starred' : 'Star';
 
-    // Sync card button if visible
-    contentArea.querySelectorAll(`[data-action="github-star"][data-owner="${owner}"][data-repo="${repoName}"]`).forEach((b) => {
-      b.classList.toggle('is-starred', isNowStarred);
-      b.querySelector('.star-text').textContent = isNowStarred ? 'Starred' : 'Star';
+    // Sync card buttons and star counters across discovery
+    contentArea.querySelectorAll(`[data-action="github-star"]`).forEach((b) => {
+      if (b.dataset.owner?.toLowerCase() === owner.toLowerCase() && b.dataset.repo?.toLowerCase() === repoName.toLowerCase()) {
+        b.classList.toggle('is-starred', isNowStarred);
+        b.querySelector('.star-text').textContent = isNowStarred ? 'Starred' : 'Star';
+        const card = b.closest('.trending-card');
+        const starNumEl = card?.querySelector('[data-role="star-num"]');
+        if (starNumEl) {
+          const currentCount = parseInt(starNumEl.textContent.replace(/,/g, ''), 10) || 0;
+          starNumEl.textContent = formatNumber(isNowStarred ? currentCount + 1 : Math.max(0, currentCount - 1));
+        }
+      }
     });
 
     try {
@@ -1634,6 +1682,8 @@ export function renderTrendingPanel(
     open,
     close,
     isOpen,
+    isPeekOpen,
+    closePeekDrawer,
     updatePinnedState,
   };
 }

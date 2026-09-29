@@ -683,7 +683,7 @@ export async function fetchFullReadme(owner, repoName, token) {
     });
     return typeof text === 'string' ? text : '';
   } catch (err) {
-    if (err.message && (err.message.includes('404') || err.message.includes('Not Found'))) {
+    if (err.message && (err.message.includes('404') || err.message.toLowerCase().includes('not found'))) {
       return null;
     }
     throw err;
